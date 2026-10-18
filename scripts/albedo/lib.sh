@@ -6,6 +6,7 @@ repo_root=$(cd "$albedo_dir/../.." && pwd)
 albedo_host=${OGH_ALBEDO_HOST:-albedo}
 scratch_win='C:\Users\Garulf\AppData\Local\Temp\open-g-hub'
 scratch_sftp='/C:/Users/Garulf/AppData/Local/Temp/open-g-hub'
+pcap_header_bytes=24
 usbpcap_exe='C:\Program Files\USBPcap\USBPcapCMD.exe'
 
 ps_remote() {
