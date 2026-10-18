@@ -2,4 +2,4 @@
 
 # open-g-hub
 
-Created in [T3 Code](https://t3.codes).
+An open-source Rust replacement for Logitech G Hub, for the Astro A50 X headset on Windows and Linux.
