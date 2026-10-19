@@ -1,4 +1,4 @@
-{"label":"b-sidetone","notes":"G Hub sidetone slider set to 68, 100, 51, then 0, starting from 0. Wire values written: 04, 06, 03, 00. G Hub running; headset off the dock.","setting":"sidetone","values":[{"ui":68,"wire":4},{"ui":100,"wire":6},{"ui":51,"wire":3},{"ui":0,"wire":0}],"scrubbed":[]}
+{"label":"b-sidetone","notes":"G Hub sidetone slider set to 68, 100, 51, then 0, starting from 0. Wire values written: 04, 06, 03, 00. G Hub running.","setting":"sidetone","values":[{"ui":68,"wire":4},{"ui":100,"wire":6},{"ui":51,"wire":3},{"ui":0,"wire":0}],"scrubbed":[]}
 {"t_ms":11804.58,"dir":"out","hex":"020c0600091b01ff0400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}
 {"t_ms":11814.617,"dir":"in","hex":"020c0300091b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}
 {"t_ms":11815.613,"dir":"in","hex":"020c070009000101ff04000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}
