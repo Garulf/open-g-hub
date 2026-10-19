@@ -41,13 +41,21 @@ pub fn socket_path(runtime_dir: &Path, signature: Option<&str>) -> Option<PathBu
     }
 }
 
+/// Like `socket_path`, but a signature whose socket is gone (a stale
+/// environment after a Hyprland restart) falls back to the newest instance.
+pub fn resolve(runtime_dir: &Path, signature: Option<&str>) -> Option<PathBuf> {
+    signature
+        .and_then(|signature| socket_path(runtime_dir, Some(signature)))
+        .or_else(|| socket_path(runtime_dir, None))
+}
+
 pub(crate) fn spawn(on_focus: Sender<Option<String>>) -> Result<JoinHandle<()>, Unavailable> {
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .ok_or_else(|| Unavailable(NEEDS_HYPRLAND.to_string()))?;
     let resolve = move || {
         let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok();
-        socket_path(&runtime_dir, signature.as_deref())
+        resolve(&runtime_dir, signature.as_deref())
     };
     if resolve().is_none() {
         return Err(Unavailable(NEEDS_HYPRLAND.to_string()));
