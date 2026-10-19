@@ -116,7 +116,7 @@ ogh profile unlink cs2.exe
 ogh profile delete fps
 ```
 
-A linked app switches the headset to that profile while it has focus, and the default profile applies when no linked app does. Name the app by its executable file name on Windows (`cs2.exe`) and by its window class on Hyprland. Focus tracking works on Windows and on Hyprland. Elsewhere `ogh status` reports it as unavailable.
+A linked app switches the headset to that profile while it has focus, and the default profile applies when no linked app does. Name the app by its executable file name on Windows (`cs2.exe`) and by its window class on Hyprland. Focus tracking works on Windows and on Hyprland. On other Linux desktops the daemon keeps waiting for a Hyprland session, so linked apps never switch there.
 
 ```sh
 ogh autoswitch on
