@@ -446,6 +446,7 @@ dependencies = [
  "ogh-protocol",
  "serde_json",
  "tempfile",
+ "windows-sys",
 ]
 
 [[package]]

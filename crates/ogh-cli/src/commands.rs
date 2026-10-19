@@ -8,6 +8,7 @@ use ogh_ipc::{
 };
 use ogh_protocol::features::advanced_para_eq::{self as eq, Equalizer};
 
+use crate::autostart::{self, AutostartCommand};
 use crate::daemon::Daemon;
 use crate::error::CliError;
 use crate::output;
@@ -336,6 +337,11 @@ pub enum Command {
     },
     /// Turn automatic profile switching on or off
     Autoswitch { state: Toggle },
+    /// Start ogh-daemon at logon (Windows)
+    Autostart {
+        #[command(subcommand)]
+        command: AutostartCommand,
+    },
 }
 
 pub fn run(cli: &Cli, client: &mut impl Daemon, out: &mut impl Write) -> Result<(), CliError> {
@@ -388,6 +394,7 @@ pub fn run(cli: &Cli, client: &mut impl Daemon, out: &mut impl Write) -> Result<
         Command::Mix { channel, action } => mix(client, out, *channel, *action),
         Command::Eq { target, command } => eq_command(client, out, *target, command),
         Command::Profile { command } => profile(client, out, command),
+        Command::Autostart { command } => autostart::run(*command, out),
         Command::Autoswitch { state } => {
             let enabled = *state == Toggle::On;
             expect_done(client, Request::SetAutoSwitch { enabled })?;
