@@ -317,6 +317,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ogh-ipc"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ogh-protocol"
 version = "0.1.0"
 dependencies = [
