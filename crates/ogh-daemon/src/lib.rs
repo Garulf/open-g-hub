@@ -25,12 +25,12 @@ const WORKER_STOP_WAIT: Duration = Duration::from_secs(2);
 /// Runs until Ctrl-C or SIGTERM, then exits the process with status 0.
 pub fn run(paths: Paths) -> Result<(), String> {
     let endpoint = Endpoint::for_current_user().map_err(|e| e.to_string())?;
-    let server = Server::bind(&endpoint).map_err(|e| e.to_string())?;
     let (stop_tx, stop) = bounded(1);
     ctrlc::set_handler(move || {
         let _ = stop_tx.try_send(());
     })
     .map_err(|e| format!("cannot install the signal handler: {e}"))?;
+    let server = Server::bind(&endpoint).map_err(|e| e.to_string())?;
 
     let store = Store::open(&paths.config_file);
     let (commands, command_rx) = unbounded();

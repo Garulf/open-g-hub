@@ -14,8 +14,8 @@ use ogh_daemon::ipc_server;
 use ogh_daemon::snapshot::DeviceSnapshot;
 use ogh_device::{FeatureId, FeatureInfo};
 use ogh_ipc::{
-    Client, Connection, Endpoint, ErrorKind, IPC_VERSION, Notification, Request, Response, Server,
-    Setting, Status, Subscription, read_line,
+    Client, Connection, Endpoint, ErrorKind, IPC_VERSION, MAX_LINE_BYTES, Notification, Request,
+    Response, Server, Setting, Status, Subscription, read_line,
 };
 use ogh_protocol::features::sidetone::Sidetone;
 use tempfile::TempDir;
@@ -27,19 +27,30 @@ struct Daemon {
     socket: PathBuf,
     inputs: Sender<Input>,
     device: Receiver<DeviceCommand>,
-    _controller: JoinHandle<()>,
+    _controller: Option<JoinHandle<()>>,
     _server: JoinHandle<()>,
     _dir: TempDir,
 }
 
 impl Daemon {
     fn start() -> Daemon {
+        Daemon::start_with(true)
+    }
+
+    /// The controller's input receiver is gone, as when the daemon is shutting down.
+    fn start_without_controller() -> Daemon {
+        Daemon::start_with(false)
+    }
+
+    fn start_with(controller_runs: bool) -> Daemon {
         let dir = TempDir::new().unwrap();
         let store = Store::open(&dir.path().join("config.toml"));
         let (devices, device) = unbounded();
         let (inputs, input_rx) = unbounded();
-        let controller = Controller::new(store, devices, Instant::now);
-        let controller = thread::spawn(move || controller.run(input_rx));
+        let controller = controller_runs.then(|| {
+            let controller = Controller::new(store, devices, Instant::now);
+            thread::spawn(move || controller.run(input_rx))
+        });
 
         let socket = dir.path().join("daemon.sock");
         let endpoint = Endpoint::Path(socket.clone());
@@ -120,9 +131,20 @@ impl Raw {
             .expect("a reply, not a closed connection")
     }
 
+    fn notification(&mut self) -> Notification {
+        read_line(&mut self.reader)
+            .expect("a readable line")
+            .expect("a notification, not a closed connection")
+    }
+
     fn assert_closed(&mut self) {
         let next: Option<Response> = read_line(&mut self.reader).expect("a clean close");
         assert_eq!(next, None);
+    }
+
+    fn send_unterminated(&mut self, bytes: &[u8]) {
+        use std::io::Write;
+        let _ = self.stream.write_all(bytes);
     }
 
     fn hello(&mut self) {
@@ -251,11 +273,14 @@ fn subscription_receives_a_status_after_a_set() {
 #[test]
 fn client_disconnect_mid_subscription_does_not_stop_the_server() {
     let daemon = Daemon::start();
-    let gone = watch(daemon.client().subscribe().unwrap());
+    let mut leaving = daemon.raw();
+    leaving.hello();
+    leaving.send_line(r#"{"cmd":"subscribe"}"#);
+    assert_eq!(leaving.reply(), Response::Done);
+    assert!(matches!(leaving.notification(), Notification::Status(_)));
     let staying = watch(daemon.client().subscribe().unwrap());
-    next_status(&gone);
     next_status(&staying);
-    drop(gone);
+    drop(leaving);
 
     daemon.connect_device(0);
     status_until(&staying, |status| {
@@ -267,4 +292,44 @@ fn client_disconnect_mid_subscription_does_not_stop_the_server() {
         client.call(&Request::Status).unwrap(),
         Response::Status(_)
     ));
+}
+
+#[test]
+fn an_oversized_line_gets_bad_request_and_the_connection_closes() {
+    let daemon = Daemon::start();
+    let mut raw = daemon.raw();
+    raw.hello();
+
+    raw.send_unterminated(&vec![b'a'; MAX_LINE_BYTES + 10]);
+    expect_error(raw.reply(), ErrorKind::BadRequest);
+    raw.assert_closed();
+
+    let mut client = daemon.client();
+    assert!(matches!(
+        client.call(&Request::Status).unwrap(),
+        Response::Status(_)
+    ));
+}
+
+#[test]
+fn requests_after_the_controller_is_gone_get_shutting_down() {
+    let daemon = Daemon::start_without_controller();
+    let mut raw = daemon.raw();
+    raw.hello();
+
+    raw.send_line(r#"{"cmd":"status"}"#);
+    match raw.reply() {
+        Response::Error(error) => {
+            assert_eq!(error.kind, ErrorKind::Device);
+            assert_eq!(error.message, "ogh-daemon is shutting down");
+        }
+        other => panic!("expected an error, got {other:?}"),
+    }
+    raw.assert_closed();
+
+    let mut subscriber = daemon.raw();
+    subscriber.hello();
+    subscriber.send_line(r#"{"cmd":"subscribe"}"#);
+    expect_error(subscriber.reply(), ErrorKind::Device);
+    subscriber.assert_closed();
 }

@@ -141,6 +141,10 @@ fn subscribe(mut connection: Connection, inputs: &Sender<Input>) {
         return;
     }
     let Ok(writer) = connection.try_clone_writer() else {
+        let _ = connection.send(&error(
+            ErrorKind::Device,
+            "cannot stream notifications on this connection",
+        ));
         return;
     };
     if connection.send(&Response::Done).is_err() {
