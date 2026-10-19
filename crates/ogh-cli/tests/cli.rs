@@ -642,6 +642,63 @@ fn watch_json_prints_session_b_setting_events() {
     );
 }
 
+const VOLUME_FULL_MUTED_EVENT: &str = "020c060008001f0115";
+const NOISE_GATE_UNKNOWN_EVENT: &str = "020c0400160003";
+
+fn script_remaining_setting_branches(device: &ScriptedTransport) {
+    for (fixture, line) in [
+        ("session-b/small-settings", 45),
+        ("session-b/small-settings", 25),
+        ("session-b/small-settings", 7),
+    ] {
+        device.push_frame(fixture_frame(fixture, line));
+    }
+    device.push_frame(frame_from_hex(VOLUME_FULL_MUTED_EVENT));
+    device.push_frame(frame_from_hex(NOISE_GATE_UNKNOWN_EVENT));
+}
+
+#[test]
+fn watch_prints_all_never_muted_and_unknown_settings() {
+    let (mut session, device) = open();
+    script_remaining_setting_branches(&device);
+
+    let (result, out) = execute(&mut session, &["watch"], &bounded(5));
+
+    result.expect("watch succeeds");
+    assert_eq!(
+        out,
+        "tones: all\n\
+         sleep after: never\n\
+         volume: 52%\n\
+         volume: 100% muted\n\
+         noise gate: other-3\n"
+    );
+}
+
+#[test]
+fn watch_json_prints_all_never_muted_and_unknown_settings() {
+    let (mut session, device) = open();
+    script_remaining_setting_branches(&device);
+
+    let (result, out) = execute(&mut session, &["watch", "--json"], &bounded(5));
+
+    result.expect("watch succeeds");
+    let events: Vec<Value> = out
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("one json object per line"))
+        .collect();
+    assert_eq!(
+        events,
+        [
+            json!({"event": "tones", "value": 1}),
+            json!({"event": "sleep_after", "minutes": null}),
+            json!({"event": "volume", "percent": 52, "muted": false}),
+            json!({"event": "volume", "percent": 100, "muted": true}),
+            json!({"event": "noise_gate", "mode": "other-3"}),
+        ]
+    );
+}
+
 #[test]
 fn watch_stops_cleanly_when_interrupted() {
     let (mut session, _) = open();
