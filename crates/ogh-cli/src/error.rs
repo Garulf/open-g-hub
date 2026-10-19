@@ -1,32 +1,44 @@
 use std::fmt;
 use std::io;
 
-use ogh_device::DeviceError;
+use ogh_ipc::{ErrorKind, IpcError, TransportError};
+
+pub const USAGE: u8 = 2;
+pub const NOT_FOUND: u8 = 3;
+pub const GHUB_RUNNING: u8 = 4;
+pub const OTHER_FAILURE: u8 = 5;
+pub const DAEMON_UNAVAILABLE: u8 = 6;
+
+const DAEMON_NOT_RUNNING: &str = "ogh-daemon is not running; start it or enable its service";
 
 #[derive(Debug)]
 pub enum CliError {
-    /// A failure after the device was open.
-    Device(DeviceError),
-    /// A failure while finding, guarding or opening the device.
-    Opening(DeviceError),
+    /// A rejected argument, found before anything was sent to the daemon.
+    Usage(String),
+    /// The daemon could not be reached or the connection broke.
+    Transport(TransportError),
+    /// There is no endpoint to connect to, such as an unset `XDG_RUNTIME_DIR`.
+    Endpoint(TransportError),
+    /// The daemon answered with an error.
+    Daemon(IpcError),
     /// A failure on our side of the pipe, such as a closed stdout.
     Local(String),
 }
 
-const NOT_FOUND: u8 = 3;
-const GHUB_RUNNING: u8 = 4;
-const OTHER_FAILURE: u8 = 5;
-
 impl CliError {
-    /// 3 device not found, 4 G Hub running, 5 anything else. Usage errors
-    /// (2) are reported by argument parsing before a session exists.
+    /// 2 usage, 3 device not found, 4 G Hub running, 5 anything else, 6 no usable daemon.
     pub fn exit_code(&self) -> u8 {
         match self {
-            Self::Device(DeviceError::NotFound) | Self::Opening(DeviceError::NotFound) => NOT_FOUND,
-            Self::Device(DeviceError::GHubRunning) | Self::Opening(DeviceError::GHubRunning) => {
-                GHUB_RUNNING
-            }
-            _ => OTHER_FAILURE,
+            Self::Usage(_) => USAGE,
+            Self::Transport(TransportError::DaemonNotRunning)
+            | Self::Transport(TransportError::VersionMismatch { .. })
+            | Self::Endpoint(_) => DAEMON_UNAVAILABLE,
+            Self::Daemon(error) => match error.kind {
+                ErrorKind::NotConnected => NOT_FOUND,
+                ErrorKind::GhubRunning => GHUB_RUNNING,
+                _ => OTHER_FAILURE,
+            },
+            Self::Transport(_) | Self::Local(_) => OTHER_FAILURE,
         }
     }
 }
@@ -34,10 +46,13 @@ impl CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Device(error) => write!(f, "{error}"),
-            Self::Opening(error @ DeviceError::AccessDenied(_)) => {
-                write!(f, "{error}")?;
-                if cfg!(target_os = "linux") {
+            Self::Usage(message) | Self::Local(message) => write!(f, "{message}"),
+            Self::Transport(TransportError::DaemonNotRunning) => write!(f, "{DAEMON_NOT_RUNNING}"),
+            Self::Transport(error) => write!(f, "{error}"),
+            Self::Endpoint(error) => write!(f, "{DAEMON_NOT_RUNNING} ({error})"),
+            Self::Daemon(error) => {
+                write!(f, "{}", error.message)?;
+                if cfg!(target_os = "linux") && is_access_denied(&error.message) {
                     write!(
                         f,
                         "; on Linux this usually means no permission for /dev/hidraw*: \
@@ -47,17 +62,26 @@ impl fmt::Display for CliError {
                 }
                 Ok(())
             }
-            Self::Opening(error) => write!(f, "{error}"),
-            Self::Local(message) => write!(f, "{message}"),
         }
     }
 }
 
+fn is_access_denied(message: &str) -> bool {
+    let message = message.to_lowercase();
+    message.contains("access denied") || message.contains("permission denied")
+}
+
 impl std::error::Error for CliError {}
 
-impl From<DeviceError> for CliError {
-    fn from(error: DeviceError) -> Self {
-        Self::Device(error)
+impl From<TransportError> for CliError {
+    fn from(error: TransportError) -> Self {
+        Self::Transport(error)
+    }
+}
+
+impl From<IpcError> for CliError {
+    fn from(error: IpcError) -> Self {
+        Self::Daemon(error)
     }
 }
 
