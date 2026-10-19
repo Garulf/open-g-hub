@@ -12,7 +12,18 @@ use common::{
 use ogh_device::allowlist::Allowlist;
 use ogh_device::testing::{self, ScriptedTransport};
 use ogh_device::{DeviceError, Event, FeatureId, Refusal, Session};
-use ogh_protocol::{Message, request};
+use ogh_protocol::features::advanced_para_eq::{
+    self, EqBand, EqInstance, Equalizer, MAX_GAIN_DB, MAX_Q, MIN_GAIN_DB, MIN_Q,
+};
+use ogh_protocol::features::auto_sleep::{self, SleepAfter};
+use ogh_protocol::features::headset_mix::{self, GameVoiceBalance};
+use ogh_protocol::features::led_brightness;
+use ogh_protocol::features::mixer_audio::{self, MixChannel, MixInput, MixLevel, StreamMix};
+use ogh_protocol::features::noise_gate::{self, NoiseGate};
+use ogh_protocol::features::sidetone::{self, Sidetone};
+use ogh_protocol::features::tones::{self, Tones};
+use ogh_protocol::features::volume::{self, VolumeLevel};
+use ogh_protocol::{A50X_PREFIX, Message, RangeError, encode, request};
 
 const DOCK_CYCLE: &str = "session-a/dock-cycle";
 const BATTERY_REQUEST: usize = 38;
@@ -523,6 +534,149 @@ fn every_call_ghub_sent_in_session_b_settings_passes_the_rules() {
                 "{name} line {}",
                 transfer.line
             );
+        }
+    }
+}
+
+fn send_built(
+    session: &mut Session<ScriptedTransport>,
+    device: &ScriptedTransport,
+    id: FeatureId,
+    msg: Message,
+    case: &str,
+) {
+    let frame = encode(A50X_PREFIX, 0, &msg).expect("fits one frame");
+    device.push_frame(empty_reply_to(&frame));
+
+    assert_eq!(session.call(id, |_| msg), Ok(vec![]), "{case}");
+    assert_eq!(device.writes().last(), Some(&frame), "{case}");
+}
+
+fn index_in(session: &Session<ScriptedTransport>, id: FeatureId) -> u8 {
+    session
+        .features()
+        .iter()
+        .find(|feature| feature.id == id)
+        .map(|feature| feature.index)
+        .expect("feature in the launch table")
+}
+
+fn send_every_accepted_value(
+    id: FeatureId,
+    build: impl Fn(u8, u8) -> Result<Message, RangeError>,
+) -> Vec<u8> {
+    let (mut session, device) = open_scripted();
+    let index = index_in(&session, id);
+    let mut accepted = Vec::new();
+    for value in 0..=u8::MAX {
+        let Ok(msg) = build(index, value) else {
+            continue;
+        };
+        send_built(&mut session, &device, id, msg, &format!("{id:?} {value}"));
+        accepted.push(value);
+    }
+    accepted
+}
+
+type ByteBuilder = fn(u8, u8) -> Result<Message, RangeError>;
+
+#[test]
+fn every_value_the_small_setting_builders_accept_is_sent() {
+    let cases: [(FeatureId, ByteBuilder, Vec<u8>); 7] = [
+        (
+            FeatureId::HEADSET_SIDETONE,
+            |index, level| sidetone::set_request(index, Sidetone(level)),
+            (0..=6).collect(),
+        ),
+        (
+            FeatureId::HEADSET_MIX,
+            |index, balance| headset_mix::set_request(index, GameVoiceBalance(balance)),
+            (0..=12).collect(),
+        ),
+        (
+            FeatureId::VOLUME_SET,
+            |index, level| volume::set_request(index, VolumeLevel(level)),
+            (0..=21).collect(),
+        ),
+        (
+            FeatureId::LED_BRIGHTNESS,
+            led_brightness::set_request,
+            (0..=100).collect(),
+        ),
+        (
+            FeatureId::AUTO_SLEEP,
+            |index, minutes| auto_sleep::set_request(index, SleepAfter(minutes)),
+            vec![0, 15, 30],
+        ),
+        (
+            FeatureId::HEADSET_TONES,
+            |index, tones| tones::set_request(index, Tones(tones)),
+            vec![0, 1, 2],
+        ),
+        (
+            FeatureId::MIXER_MIC,
+            |index, gate| noise_gate::set_request(index, NoiseGate::from_byte(gate)),
+            vec![0, 1, 2, 4],
+        ),
+    ];
+    for (id, build, expected) in cases {
+        assert_eq!(send_every_accepted_value(id, build), expected, "{id:?}");
+    }
+}
+
+#[test]
+fn every_mixer_level_the_builder_accepts_is_sent_on_game_voice_and_stream() {
+    for muted in [false, true] {
+        let accepted = send_every_accepted_value(FeatureId::MIXER_AUDIO, |index, level| {
+            let channel = MixChannel {
+                level: MixLevel(level),
+                muted,
+            };
+            let mut mix = StreamMix {
+                stream: channel,
+                inputs: [mixer_audio::PINNED_INPUT; 4],
+            };
+            *mix.input_mut(MixInput::Game) = channel;
+            *mix.input_mut(MixInput::Voice) = channel;
+            mixer_audio::set_request(index, &mix)
+        });
+
+        assert_eq!(accepted, (0..=mixer_audio::MAX_LEVEL).collect::<Vec<_>>());
+    }
+}
+
+const HEADPHONE_RANGE_FREQS: [u16; 10] = [20, 50, 125, 250, 500, 1000, 2500, 5000, 10000, 20000];
+const MIC_RANGE_FREQS: [u16; 10] = [60, 150, 250, 400, 800, 1500, 2500, 5000, 10000, 20000];
+
+#[test]
+fn eq_cards_at_the_builder_limits_are_sent() {
+    let (mut session, device) = open_scripted();
+    let index = index_in(&session, FeatureId::ADVANCED_PARA_EQ);
+    for (instance, freqs) in [
+        (EqInstance::Headphone, HEADPHONE_RANGE_FREQS),
+        (EqInstance::Mic, MIC_RANGE_FREQS),
+    ] {
+        for q in [Some(MIN_Q), Some(MAX_Q), None] {
+            for gain_db in [MIN_GAIN_DB, MAX_GAIN_DB] {
+                let card = Equalizer {
+                    bands: freqs.map(|freq_hz| EqBand {
+                        freq_hz,
+                        q,
+                        gain_db,
+                    }),
+                };
+                let case = format!("{instance:?} Q {q:?} gain {gain_db}");
+                let msg = advanced_para_eq::set_custom_request(index, instance, &card)
+                    .unwrap_or_else(|e| panic!("{case}: {e}"));
+
+                send_built(
+                    &mut session,
+                    &device,
+                    FeatureId::ADVANCED_PARA_EQ,
+                    msg,
+                    &case,
+                );
+            }
         }
     }
 }
