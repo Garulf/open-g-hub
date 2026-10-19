@@ -1,5 +1,10 @@
 {
   "crates/ogh-protocol": "0.0.0",
   "crates/ogh-device": "0.0.0",
-  "crates/ogh-cli": "0.0.0"
+  "crates/ogh-cli": "0.0.0",
+  "crates/ogh-ipc": "0.0.0",
+  "crates/ogh-daemon": "0.0.0",
+  "crates/ogh-focus": "0.0.0",
+  "crates/ogh-audio": "0.0.0",
+  "crates/ogh-capture": "0.0.0"
 }

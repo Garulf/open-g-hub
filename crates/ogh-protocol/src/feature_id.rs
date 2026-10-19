@@ -1,5 +1,11 @@
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FeatureId(pub u16);
+
+impl std::fmt::Debug for FeatureId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FeatureId({:#06x})", self.0)
+    }
+}
 
 macro_rules! feature_ids {
     ($($const_name:ident = $id:literal => $name:literal,)*) => {

@@ -3,10 +3,12 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
-use ogh_device::FeatureId;
+use ogh_device::testing::ScriptedTransport;
+use ogh_device::{FeatureId, Session};
 use ogh_protocol::discovery::{parse_feature_page, parse_get_feature};
-use ogh_protocol::{A50X_PREFIX, Decoded, FRAME_LEN, Message, decode};
+use ogh_protocol::{A50X_PREFIX, Decoded, FRAME_LEN, Message, decode, encode};
 use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,4 +167,43 @@ pub fn sent_calls(transfers: &[Transfer], ids: &HashMap<u8, FeatureId>) -> Vec<(
             (id, msg.function)
         })
         .collect()
+}
+
+pub const SHORT_TIMEOUT: Duration = Duration::from_millis(100);
+
+pub fn open_scripted() -> (Session<ScriptedTransport>, ScriptedTransport) {
+    let device = ScriptedTransport::with_launch_discovery();
+    let handle = device.clone();
+    let mut session = Session::with_transport(device).expect("open sequence succeeds");
+    session.set_request_timeout(SHORT_TIMEOUT);
+    (session, handle)
+}
+
+pub fn empty_reply_to(request: &[u8; FRAME_LEN]) -> [u8; FRAME_LEN] {
+    frame_from_hex(&format!("020c0300{:02x}{:02x}", request[4], request[5]))
+}
+
+/// Sends `msg` through `call`, scripting an empty reply, and asserts the
+/// session wrote exactly the encoded message.
+pub fn send_built(
+    session: &mut Session<ScriptedTransport>,
+    device: &ScriptedTransport,
+    id: FeatureId,
+    msg: Message,
+    case: &str,
+) {
+    let frame = encode(A50X_PREFIX, 0, &msg).expect("fits one frame");
+    device.push_frame(empty_reply_to(&frame));
+
+    assert_eq!(session.call(id, |_| msg), Ok(vec![]), "{case}");
+    assert_eq!(device.writes().last(), Some(&frame), "{case}");
+}
+
+pub fn index_in(session: &Session<ScriptedTransport>, id: FeatureId) -> u8 {
+    session
+        .features()
+        .iter()
+        .find(|feature| feature.id == id)
+        .map(|feature| feature.index)
+        .expect("feature in the launch table")
 }

@@ -6,6 +6,11 @@
   "packages": {
     "crates/ogh-protocol": { "component": "ogh-protocol" },
     "crates/ogh-device": { "component": "ogh-device" },
-    "crates/ogh-cli": { "component": "ogh-cli" }
+    "crates/ogh-cli": { "component": "ogh-cli" },
+    "crates/ogh-ipc": { "component": "ogh-ipc" },
+    "crates/ogh-daemon": { "component": "ogh-daemon" },
+    "crates/ogh-focus": { "component": "ogh-focus" },
+    "crates/ogh-audio": { "component": "ogh-audio" },
+    "crates/ogh-capture": { "component": "ogh-capture" }
   }
 }

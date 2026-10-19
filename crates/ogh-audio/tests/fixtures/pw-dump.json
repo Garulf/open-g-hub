@@ -1,0 +1,93 @@
+[
+  {
+    "id": 41,
+    "type": "PipeWire:Interface:Node",
+    "info": {
+      "props": {
+        "media.class": "Audio/Sink",
+        "node.name": "alsa_output.pci-0000_00_1f.3.analog-stereo",
+        "node.description": "Built-in Audio Analog Stereo",
+        "node.nick": "HDA Intel PCH"
+      }
+    }
+  },
+  {
+    "id": 57,
+    "type": "PipeWire:Interface:Node",
+    "info": {
+      "props": {
+        "media.class": "Audio/Sink",
+        "node.name": "alsa_output.usb-Astro_A50_X-00.analog-stereo",
+        "node.description": "Astro A50 X Analog Stereo",
+        "node.nick": "A50 X"
+      }
+    }
+  },
+  {
+    "id": 63,
+    "type": "PipeWire:Interface:Node",
+    "info": {
+      "props": {
+        "media.class": "Audio/Source",
+        "node.name": "alsa_input.pci-0000_00_1f.3.analog-stereo",
+        "node.description": "Built-in Audio Analog Stereo",
+        "node.nick": "HDA Intel PCH"
+      }
+    }
+  },
+  {
+    "id": 64,
+    "type": "PipeWire:Interface:Node",
+    "info": {
+      "props": {
+        "media.class": "Audio/Source",
+        "node.name": "alsa_input.usb-Astro_A50_X-00.mono-fallback",
+        "node.nick": "Astro A50 X Mic"
+      }
+    }
+  },
+  {
+    "id": 70,
+    "type": "PipeWire:Interface:Node",
+    "info": {
+      "props": {
+        "media.class": "Stream/Output/Audio",
+        "node.name": "firefox",
+        "node.description": "A50 X test stream"
+      }
+    }
+  },
+  {
+    "id": 33,
+    "type": "PipeWire:Interface:Metadata",
+    "props": { "metadata.name": "settings" },
+    "metadata": [
+      { "subject": 0, "key": "clock.rate", "type": "Spa:String:JSON", "value": 48000 }
+    ]
+  },
+  {
+    "id": 34,
+    "type": "PipeWire:Interface:Metadata",
+    "props": { "metadata.name": "default" },
+    "metadata": [
+      {
+        "subject": 0,
+        "key": "default.audio.sink",
+        "type": "Spa:String:JSON",
+        "value": { "name": "alsa_output.pci-0000_00_1f.3.analog-stereo" }
+      },
+      {
+        "subject": 0,
+        "key": "default.audio.source",
+        "type": "Spa:String:JSON",
+        "value": { "name": "alsa_input.pci-0000_00_1f.3.analog-stereo" }
+      },
+      {
+        "subject": 0,
+        "key": "default.configured.audio.sink",
+        "type": "Spa:String:JSON",
+        "value": { "name": "alsa_output.usb-Astro_A50_X-00.analog-stereo" }
+      }
+    ]
+  }
+]

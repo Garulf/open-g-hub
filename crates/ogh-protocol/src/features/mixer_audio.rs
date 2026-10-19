@@ -3,6 +3,7 @@ use crate::error::{ParseError, RangeError, require_len};
 use crate::frame::{Message, request};
 
 const GET_INPUT_STATE: u8 = 2;
+const GET_SETTINGS: u8 = 5;
 const SET_SETTINGS: u8 = 6;
 /// The A50 X has one output, USB_STREAM, at index 0 (getOutputInfo).
 const STREAM_OUTPUT: u8 = 0;
@@ -110,6 +111,11 @@ impl StreamMix {
     }
 }
 
+/// fn5 getMixerSettings, asked for the Stream Port output.
+pub fn get_settings_request(feature_index: u8) -> Message {
+    request(feature_index, GET_SETTINGS, &[STREAM_OUTPUT])
+}
+
 /// fn6 setMixerSettings: `00 <level> <mute> 04` then `<index> <level>
 /// <mute>` for each input. Pinned inputs must hold `PINNED_INPUT`.
 pub fn set_request(feature_index: u8, mix: &StreamMix) -> Result<Message, RangeError> {
@@ -155,12 +161,23 @@ fn push_channel(params: &mut Vec<u8>, channel: MixChannel) -> Result<(), RangeEr
 pub fn parse_settings(params: &[u8]) -> Result<StreamMix, ParseError> {
     require_len(params, SETTINGS_LEN)?;
     expect_byte(params[0], STREAM_OUTPUT)?;
-    let stream = parse_channel(&params[1..3])?;
-    expect_byte(params[3], INPUT_COUNT as u8)?;
+    parse_mix(&params[1..SETTINGS_LEN])
+}
+
+/// Parses a fn5 reply: the fn6 params without the output byte.
+pub fn parse_settings_reply(params: &[u8]) -> Result<StreamMix, ParseError> {
+    require_len(params, SETTINGS_LEN - 1)?;
+    parse_mix(&params[..SETTINGS_LEN - 1])
+}
+
+/// `<level> <mute> 04` then `<index> <level> <mute>` for each input.
+fn parse_mix(params: &[u8]) -> Result<StreamMix, ParseError> {
+    let stream = parse_channel(&params[0..2])?;
+    expect_byte(params[2], INPUT_COUNT as u8)?;
     let mut inputs = [stream; INPUT_COUNT];
     for (input, record) in MixInput::ALL
         .iter()
-        .zip(params[4..SETTINGS_LEN].as_chunks::<RECORD_LEN>().0)
+        .zip(params[3..].as_chunks::<RECORD_LEN>().0)
     {
         expect_byte(record[0], input.index())?;
         inputs[usize::from(input.index())] = parse_channel(&record[1..])?;

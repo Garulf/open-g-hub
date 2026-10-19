@@ -4,14 +4,19 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 label=${1:?usage: capture.sh <label> <seconds>}
 seconds=${2:?usage: capture.sh <label> <seconds>}
-hub=${OGH_USBPCAP_HUB:-USBPcap1}
-device=${OGH_USBPCAP_DEVICE:-8}
-
 [[ $label =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid label: $label" >&2; exit 2; }
 [[ $seconds =~ ^[0-9]+$ ]] || { echo "invalid seconds: $seconds" >&2; exit 2; }
+
+hub=${OGH_USBPCAP_HUB:-}
+device=${OGH_USBPCAP_DEVICE:-}
+if [[ -z $hub || -z $device ]]; then
+    found=$("$albedo_dir/find-device.sh")
+    read -r hub device <<<"$found"
+fi
 [[ $hub =~ ^USBPcap[0-9]+$ ]] || { echo "invalid hub: $hub" >&2; exit 2; }
 [[ $device =~ ^[0-9]+$ ]] || { echo "invalid device: $device" >&2; exit 2; }
 
+scratch_win=$(remote_scratch)
 remote_pcap="$scratch_win\\$label.pcap"
 local_pcap="$repo_root/captures/$label.pcap"
 

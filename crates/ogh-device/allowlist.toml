@@ -146,7 +146,7 @@ feature = 0x0800
 function = 4
 seen_in = "session-a/ghub-launch"
 
-# iMixerAudio read
+# iMixerAudio get mixer settings (params 00, enforced in param_rules)
 [[allow]]
 feature = 0x0800
 function = 5
@@ -158,7 +158,7 @@ feature = 0x020D
 function = 0
 seen_in = "session-a/ghub-launch"
 
-# AdvancedParaEQ get custom EQ
+# AdvancedParaEQ get custom EQ (params <instance> 03, enforced in param_rules)
 [[allow]]
 feature = 0x020D
 function = 1

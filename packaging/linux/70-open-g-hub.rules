@@ -1,0 +1,2 @@
+# Astro A50 X base station (Logitech 046d:0b0b): give the logged-in user access to its hidraw node
+KERNEL=="hidraw*", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0b0b", TAG+="uaccess"

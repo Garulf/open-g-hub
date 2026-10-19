@@ -1378,3 +1378,99 @@ fn eq_gain_off_the_grid_rounds_to_the_nearest_step() {
         );
     }
 }
+
+fn launch_messages(dir: Dir, index: u8, function: u8) -> Vec<Message> {
+    load("ghub-launch")
+        .into_iter()
+        .filter(|t| t.dir == dir)
+        .filter_map(|t| match decode(A50X_PREFIX, &t.frame).unwrap() {
+            Decoded::Reply { msg, .. } => Some(msg),
+            _ => None,
+        })
+        .filter(|msg| msg.feature_index == index && msg.function == function)
+        .collect()
+}
+
+#[test]
+fn get_custom_eq_request_matches_ghub_launch() {
+    let sent = launch_messages(Dir::Out, EQ, 1);
+    assert_eq!(sent.len(), 2);
+    for (instance, ghub) in [EqInstance::Mic, EqInstance::Headphone].iter().zip(&sent) {
+        let built = advanced_para_eq::get_custom_request(EQ, *instance);
+        assert_eq!(built, *ghub, "{instance:?}");
+    }
+}
+
+#[test]
+fn custom_eq_reply_from_ghub_launch_decodes() {
+    let pairs = request_reply_pairs(&load("ghub-launch"));
+    let request = advanced_para_eq::get_custom_request(EQ, EqInstance::Headphone);
+    let reply = reply_to(&pairs, &request);
+    assert_eq!(reply.params.len(), 51);
+
+    let equalizer = advanced_para_eq::parse_custom_reply(&reply.params).unwrap();
+
+    let freqs = equalizer.bands.map(|band| band.freq_hz);
+    assert_eq!(
+        freqs,
+        [20, 50, 125, 250, 500, 1000, 2500, 5000, 10000, 20000]
+    );
+    let write_back = launch_messages(Dir::Out, EQ, 2)
+        .into_iter()
+        .find(|msg| msg.params[0] == EqInstance::Headphone as u8)
+        .expect("G Hub writes the headphone EQ back at launch");
+    let rebuilt =
+        advanced_para_eq::set_custom_request(EQ, EqInstance::Headphone, &equalizer).unwrap();
+    assert_eq!(rebuilt.params, write_back.params);
+}
+
+#[test]
+fn mixer_settings_reply_from_ghub_launch_decodes() {
+    let params = [
+        0x1a, 0x00, 0x04, 0x00, 0x10, 0x01, 0x01, 0x10, 0x00, 0x02, 0x10, 0x01, 0x03, 0x10, 0x00,
+    ];
+
+    let mix = mixer_audio::parse_settings_reply(&params).unwrap();
+
+    let level = |channel: MixChannel| (channel.level.0, channel.muted);
+    assert_eq!(level(mix.stream), (0x1a, false));
+    assert_eq!(level(mix.input(MixInput::Game)), (0x10, false));
+    assert_eq!(level(mix.input(MixInput::Voice)), (0x10, false));
+    assert_eq!(level(mix.input(MixInput::MicOut)), (0x10, true));
+    assert_eq!(level(mix.input(MixInput::Bluetooth)), (0x10, true));
+}
+
+#[test]
+fn mixer_settings_reply_matches_the_launch_capture() {
+    let pairs = request_reply_pairs(&load("ghub-launch"));
+    let request = mixer_audio::get_settings_request(MIXER_AUDIO);
+    assert_eq!(request.params, [0x00]);
+    let reply = reply_to(&pairs, &request);
+    assert!(mixer_audio::parse_settings_reply(&reply.params).is_ok());
+}
+
+#[test]
+fn short_custom_eq_reply_is_an_error() {
+    let params = [0u8; 50];
+    assert!(matches!(
+        advanced_para_eq::parse_custom_reply(&params),
+        Err(ParseError::TooShort { .. })
+    ));
+}
+
+#[test]
+fn short_mixer_settings_reply_is_an_error() {
+    let params = [0x1a, 0x00, 0x04, 0x00, 0x10, 0x01];
+    assert!(matches!(
+        mixer_audio::parse_settings_reply(&params),
+        Err(ParseError::TooShort { .. })
+    ));
+}
+
+#[test]
+fn feature_id_debug_is_hex() {
+    assert_eq!(
+        format!("{:?}", FeatureId::ADVANCED_PARA_EQ),
+        "FeatureId(0x020d)"
+    );
+}

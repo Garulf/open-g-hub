@@ -31,6 +31,9 @@ pub enum DeviceError {
     /// The operating system refused to open the device.
     AccessDenied(String),
     Io(String),
+    /// A value was outside what the device was seen accepting; nothing was
+    /// sent.
+    InvalidValue(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,6 +124,7 @@ impl fmt::Display for DeviceError {
             ),
             Self::AccessDenied(detail) => write!(f, "{detail}"),
             Self::Io(detail) => write!(f, "device I/O error: {detail}"),
+            Self::InvalidValue(detail) => write!(f, "invalid value: {detail}"),
         }
     }
 }

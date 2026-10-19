@@ -1,735 +1,937 @@
-use std::fs;
-use std::path::PathBuf;
-use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::collections::VecDeque;
 
 use clap::Parser;
-use ogh_cli::commands::{Cli, RunOptions, run};
+use ogh_cli::commands::{Cli, run};
+use ogh_cli::daemon::{Daemon, NotificationStream};
 use ogh_cli::error::CliError;
-use ogh_device::testing::{ScriptedTransport, frame_from_hex};
-use ogh_device::{DeviceError, FeatureId, Refusal, Session};
-use serde_json::{Value, json};
+use ogh_ipc::{
+    AutoSwitchStatus, Battery, Channel, Charge, Connection, DeviceSettings, Eq, EqBand, ErrorKind,
+    Feature, FocusStatus, Gate, Headset, IpcError, Notification, ProfileInfo, ProfileSettings,
+    Request, Response, Setting, Status, StreamMixSetting, TransportError,
+};
+use ogh_protocol::features::advanced_para_eq as eq;
+use serde_json::Value;
 
-const LAUNCH: &str = "session-a/ghub-launch";
-const DOCK_CYCLE: &str = "session-a/dock-cycle";
-const SIDETONE: &str = "session-b/sidetone";
-const SHORT_TIMEOUT: Duration = Duration::from_millis(100);
-
-const MIC_TEST_REQUEST: usize = 132;
-const BATTERY_REQUEST: usize = 38;
-const SIDETONE_GET_REQUEST: usize = 88;
-const BALANCE_GET_REQUEST: usize = 130;
-const NOISE_GATE_REQUEST: usize = 56;
-const FIRMWARE_REQUEST: usize = 12;
-const MIC_TEST_DOCKED_REPLY: usize = 133;
-const BATTERY_FULL_REPLY: usize = 39;
-const SIDETONE_ZERO_REPLY: usize = 89;
-const BALANCE_REPLY: usize = 131;
-const NOISE_GATE_OFF_REPLY: usize = 57;
-const FIRMWARE_REPLY: usize = 13;
-
-const MIC_TEST_IN_USE: &str = "020c0400136b00";
-const BATTERY_DISCHARGING: &str = "020c0600060b646400";
-const BATTERY_CHARGING: &str = "020c0600060b646401";
-const NOT_CONNECTED_ERROR: &str = "020c0600ff060b08";
-const SIDETONE_LEVEL_FOUR: &str = "020c0700090b0101ff04";
-const NOISE_GATE_TOURNAMENT: &str = "020c0400161b04";
-
-fn fixture_frame(name: &str, line: usize) -> [u8; 64] {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures")
-        .join(format!("{name}.jsonl"));
-    let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let entry = text.lines().nth(line - 1).expect("fixture line");
-    let parsed: Value = serde_json::from_str(entry).expect("fixture json");
-    frame_from_hex(parsed["hex"].as_str().expect("hex field"))
+#[derive(Default)]
+struct FakeDaemon {
+    replies: VecDeque<Result<Response, TransportError>>,
+    requests: Vec<Request>,
+    notifications: Vec<Result<Notification, TransportError>>,
+    subscribe_error: Option<TransportError>,
 }
 
-fn open() -> (Session<ScriptedTransport>, ScriptedTransport) {
-    let device = ScriptedTransport::with_launch_discovery();
-    let handle = device.clone();
-    let mut session = Session::with_transport(device).expect("open sequence succeeds");
-    session.set_request_timeout(SHORT_TIMEOUT);
-    (session, handle)
-}
-
-struct StatusReplies {
-    mic_test: [u8; 64],
-    battery: Option<[u8; 64]>,
-    sidetone: [u8; 64],
-    noise_gate: [u8; 64],
-}
-
-impl StatusReplies {
-    fn docked() -> Self {
+impl FakeDaemon {
+    fn replying(replies: impl IntoIterator<Item = Response>) -> Self {
         Self {
-            mic_test: fixture_frame(LAUNCH, MIC_TEST_DOCKED_REPLY),
-            battery: Some(fixture_frame(LAUNCH, BATTERY_FULL_REPLY)),
-            sidetone: fixture_frame(LAUNCH, SIDETONE_ZERO_REPLY),
-            noise_gate: fixture_frame(LAUNCH, NOISE_GATE_OFF_REPLY),
+            replies: replies.into_iter().map(Ok).collect(),
+            ..Self::default()
         }
     }
 
-    fn in_use() -> Self {
+    fn failing(error: TransportError) -> Self {
         Self {
-            mic_test: frame_from_hex(MIC_TEST_IN_USE),
-            battery: Some(frame_from_hex(BATTERY_DISCHARGING)),
-            sidetone: frame_from_hex(SIDETONE_LEVEL_FOUR),
-            noise_gate: frame_from_hex(NOISE_GATE_TOURNAMENT),
+            replies: VecDeque::from([Err(error)]),
+            ..Self::default()
         }
-    }
-
-    fn headset_off() -> Self {
-        Self {
-            battery: None,
-            ..Self::docked()
-        }
-    }
-
-    fn script(&self, device: &ScriptedTransport) {
-        device.push_frame(self.mic_test);
-        match self.battery {
-            Some(frame) => device.push_frame(frame),
-            None => device.push_timeout(),
-        }
-        device.push_frame(self.sidetone);
-        device.push_frame(fixture_frame(LAUNCH, BALANCE_REPLY));
-        device.push_frame(self.noise_gate);
-        device.push_frame(fixture_frame(LAUNCH, FIRMWARE_REPLY));
     }
 }
 
-fn execute(
-    session: &mut Session<ScriptedTransport>,
-    args: &[&str],
-    options: &RunOptions,
-) -> (Result<(), CliError>, String) {
-    let cli = Cli::try_parse_from(std::iter::once("ogh").chain(args.iter().copied()))
-        .expect("arguments parse");
+impl Daemon for FakeDaemon {
+    fn call(&mut self, request: &Request) -> Result<Response, TransportError> {
+        self.requests.push(request.clone());
+        self.replies
+            .pop_front()
+            .expect("the test scripted a reply for every request")
+    }
+
+    fn subscribe(&mut self) -> Result<NotificationStream, TransportError> {
+        if let Some(error) = self.subscribe_error.take() {
+            return Err(error);
+        }
+        Ok(Box::new(
+            std::mem::take(&mut self.notifications).into_iter(),
+        ))
+    }
+}
+
+struct Outcome {
+    result: Result<(), CliError>,
+    stdout: String,
+    requests: Vec<Request>,
+}
+
+fn run_with(args: &[&str], mut daemon: FakeDaemon) -> Outcome {
+    let mut argv = vec!["ogh"];
+    argv.extend_from_slice(args);
+    let cli = Cli::try_parse_from(argv).expect("arguments parse");
     let mut out = Vec::new();
-    let result = run(&cli.command, session, &mut out, options);
-    (result, String::from_utf8(out).expect("utf-8 output"))
-}
-
-fn status_json(replies: &StatusReplies) -> Value {
-    let (mut session, device) = open();
-    replies.script(&device);
-    let (result, out) = execute(&mut session, &["status", "--json"], &RunOptions::default());
-    result.expect("status succeeds");
-    serde_json::from_str(&out).expect("one json document")
-}
-
-fn status_human(replies: &StatusReplies) -> String {
-    let (mut session, device) = open();
-    replies.script(&device);
-    let (result, out) = execute(&mut session, &["status"], &RunOptions::default());
-    result.expect("status succeeds");
-    out
-}
-
-fn human_value<'a>(text: &'a str, key: &str) -> &'a str {
-    text.lines()
-        .find_map(|line| line.strip_prefix(key)?.strip_prefix(':'))
-        .unwrap_or_else(|| panic!("no {key} line in {text}"))
-        .trim()
-}
-
-#[test]
-fn status_json_shape() {
-    let status = status_json(&StatusReplies::docked());
-
-    let object = status.as_object().expect("a json object");
-    let mut keys: Vec<_> = object.keys().map(String::as_str).collect();
-    keys.sort_unstable();
-    assert_eq!(
-        keys,
-        [
-            "balance",
-            "battery_percent",
-            "charging",
-            "docked",
-            "firmware",
-            "headset",
-            "headset_connected",
-            "noise_gate",
-            "sidetone",
-        ]
-    );
-    assert_eq!(
-        status,
-        json!({
-            "headset": "docked",
-            "battery_percent": 100,
-            "charging": false,
-            "docked": true,
-            "headset_connected": false,
-            "sidetone": 0,
-            "balance": 6,
-            "noise_gate": "off",
-            "firmware": "1.2.18",
-        })
-    );
-}
-
-#[test]
-fn status_reads_like_ghub() {
-    let (mut session, device) = open();
-    let before = device.writes().len();
-    StatusReplies::docked().script(&device);
-
-    execute(&mut session, &["status"], &RunOptions::default())
-        .0
-        .expect("status succeeds");
-
-    let sent: Vec<_> = device.writes().split_off(before);
-    let ghub: Vec<_> = [
-        MIC_TEST_REQUEST,
-        BATTERY_REQUEST,
-        SIDETONE_GET_REQUEST,
-        BALANCE_GET_REQUEST,
-        NOISE_GATE_REQUEST,
-        FIRMWARE_REQUEST,
-    ]
-    .map(|line| fixture_frame(LAUNCH, line))
-    .to_vec();
-    assert_eq!(sent, ghub);
-}
-
-#[test]
-fn status_in_use() {
-    let status = status_json(&StatusReplies::in_use());
-
-    assert_eq!(
-        status,
-        json!({
-            "headset": "in-use",
-            "battery_percent": 100,
-            "charging": false,
-            "docked": false,
-            "headset_connected": true,
-            "sidetone": 67,
-            "balance": 6,
-            "noise_gate": "tournament",
-            "firmware": "1.2.18",
-        })
-    );
-}
-
-#[test]
-fn headset_off_status_exits_zero_and_says_disconnected() {
-    let replies = StatusReplies::headset_off();
-
-    let human = status_human(&replies);
-    assert_eq!(human_value(&human, "headset"), "disconnected");
-    assert_eq!(human_value(&human, "battery"), "unknown");
-
-    let status = status_json(&replies);
-    assert_eq!(status["headset"], "disconnected");
-    assert_eq!(status["headset_connected"], false);
-    for key in ["battery_percent", "charging", "docked"] {
-        assert_eq!(status[key], Value::Null, "{key}");
-    }
-    assert_eq!(status["firmware"], "1.2.18");
-}
-
-#[test]
-fn status_human_output_is_an_aligned_list() {
-    let human = status_human(&StatusReplies::in_use());
-
-    let columns: Vec<_> = human
-        .lines()
-        .map(|line| {
-            let value_at = line.find(": ").expect("key: value") + 2;
-            value_at + line[value_at..].len() - line[value_at..].trim_start().len()
-        })
-        .collect();
-    assert!(columns.windows(2).all(|pair| pair[0] == pair[1]), "{human}");
-    assert_eq!(human_value(&human, "headset"), "in-use");
-    assert_eq!(human_value(&human, "battery"), "100%");
-    assert_eq!(human_value(&human, "sidetone"), "67%");
-    assert_eq!(human_value(&human, "balance"), "6");
-    assert_eq!(human_value(&human, "noise gate"), "tournament");
-    assert_eq!(human_value(&human, "firmware"), "1.2.18");
-}
-
-#[test]
-fn status_does_not_hide_a_timeout_while_the_headset_is_in_use() {
-    let (mut session, device) = open();
-    let replies = StatusReplies {
-        battery: None,
-        ..StatusReplies::in_use()
-    };
-    replies.script(&device);
-
-    let (result, out) = execute(&mut session, &["status"], &RunOptions::default());
-
-    assert!(matches!(
+    let result = run(&cli, &mut daemon, &mut out);
+    Outcome {
         result,
-        Err(CliError::Device(DeviceError::Timeout))
-    ));
-    assert_eq!(out, "");
-    assert_eq!(session.request_timeout(), SHORT_TIMEOUT);
-}
-
-#[test]
-fn an_in_use_headset_keeps_the_full_timeout_for_optional_reads() {
-    let (mut session, device) = open();
-    session.set_request_timeout(Duration::from_millis(1500));
-    StatusReplies {
-        battery: None,
-        ..StatusReplies::in_use()
+        stdout: String::from_utf8(out).expect("utf-8 output"),
+        requests: daemon.requests,
     }
-    .script(&device);
+}
 
-    let started = Instant::now();
-    let (result, _) = execute(&mut session, &["status"], &RunOptions::default());
-    let elapsed = started.elapsed();
+fn exit_code(outcome: &Outcome) -> u8 {
+    outcome
+        .result
+        .as_ref()
+        .expect_err("the command fails")
+        .exit_code()
+}
 
-    assert!(matches!(
-        result,
-        Err(CliError::Device(DeviceError::Timeout))
-    ));
-    assert!(elapsed >= Duration::from_millis(1400), "{elapsed:?}");
+fn message(outcome: &Outcome) -> String {
+    outcome
+        .result
+        .as_ref()
+        .expect_err("the command fails")
+        .to_string()
+}
+
+fn channel(level_percent: u8, muted: bool) -> Channel {
+    Channel {
+        level_percent,
+        muted,
+    }
+}
+
+fn mix() -> StreamMixSetting {
+    StreamMixSetting {
+        output: channel(80, false),
+        game: channel(50, false),
+        voice: channel(70, true),
+    }
+}
+
+fn status() -> Status {
+    Status {
+        connection: Connection::Connected,
+        headset: Headset::InUse,
+        battery: Some(Battery {
+            percent: 85,
+            charge: Charge::Discharging,
+        }),
+        firmware: Some("1.2.3".to_string()),
+        settings: DeviceSettings {
+            profile: ProfileSettings {
+                sidetone_percent: Some(40),
+                balance: Some(6),
+                noise_gate: Some(Gate::Night),
+                headphone_eq: None,
+                mic_eq: None,
+                stream_mix: Some(mix()),
+            },
+            volume_percent: Some(30),
+            led_brightness_percent: Some(80),
+            sleep_after_minutes: Some(0),
+            tones: Some(1),
+        },
+        active_profile: Some("gaming".to_string()),
+        focus: FocusStatus {
+            available: true,
+            app: Some("game.exe".to_string()),
+        },
+        auto_switch: AutoSwitchStatus {
+            enabled: true,
+            active: true,
+            error: None,
+        },
+        config_error: None,
+    }
+}
+
+fn error(kind: ErrorKind, message: &str) -> Response {
+    Response::Error(IpcError {
+        kind,
+        message: message.to_string(),
+    })
+}
+
+fn usage_exit_code(args: &[&str]) -> i32 {
+    let mut argv = vec!["ogh"];
+    argv.extend_from_slice(args);
+    match Cli::try_parse_from(argv) {
+        Err(e) => e.exit_code(),
+        Ok(_) => panic!("{args:?} parsed"),
+    }
 }
 
 #[test]
-fn headset_leaving_during_status_reads_as_disconnected() {
-    let (mut session, device) = open();
-    device.push_frame(frame_from_hex(MIC_TEST_IN_USE));
-    device.push_frame(frame_from_hex(NOT_CONNECTED_ERROR));
-    device.push_frame(frame_from_hex(SIDETONE_LEVEL_FOUR));
-    device.push_frame(fixture_frame(LAUNCH, BALANCE_REPLY));
-    device.push_frame(fixture_frame(LAUNCH, NOISE_GATE_OFF_REPLY));
-    device.push_frame(fixture_frame(LAUNCH, FIRMWARE_REPLY));
-
-    let (result, out) = execute(&mut session, &["status", "--json"], &RunOptions::default());
-
-    result.expect("status succeeds");
-    let status: Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(status["headset"], "disconnected");
-    assert_eq!(status["headset_connected"], false);
-    assert_eq!(status["battery_percent"], Value::Null);
-}
-
-#[test]
-fn a_dock_battery_status_reads_as_charging_and_docked() {
-    let replies = StatusReplies {
-        battery: Some(frame_from_hex(BATTERY_CHARGING)),
-        ..StatusReplies::docked()
-    };
-
-    let status = status_json(&replies);
-
-    assert_eq!(status["headset"], "docked");
-    assert_eq!(status["charging"], true);
-    assert_eq!(status["docked"], true);
-    assert_eq!(status["battery_percent"], 100);
+fn sidetone_sends_the_set_request_and_prints_the_new_value() {
+    let outcome = run_with(&["sidetone", "40"], FakeDaemon::replying([Response::Done]));
+    outcome.result.expect("sidetone succeeds");
     assert_eq!(
-        human_value(&status_human(&replies), "battery"),
-        "100% charging"
+        outcome.requests,
+        [Request::Set {
+            setting: Setting::Sidetone { percent: 40 }
+        }]
     );
+    assert_eq!(outcome.stdout, "sidetone 40\n");
 }
 
 #[test]
-fn a_discharging_battery_while_not_in_use_is_not_docked() {
-    let status = status_json(&StatusReplies {
-        battery: Some(frame_from_hex(BATTERY_DISCHARGING)),
-        ..StatusReplies::docked()
-    });
-
-    assert_eq!(status["headset"], "disconnected");
-    assert_eq!(status["docked"], false);
-    assert_eq!(status["charging"], false);
-    assert_eq!(status["headset_connected"], false);
+fn percent_above_100_is_a_usage_error_exit_2() {
+    assert_eq!(usage_exit_code(&["sidetone", "101"]), 2);
+    assert_eq!(usage_exit_code(&["volume", "101"]), 2);
+    assert_eq!(usage_exit_code(&["brightness", "-1"]), 2);
+    assert_eq!(usage_exit_code(&["mix", "game", "101"]), 2);
+    assert_eq!(usage_exit_code(&["sidetone", "loud"]), 2);
 }
 
 #[test]
-fn a_silent_headset_does_not_cost_the_full_timeout_per_read() {
-    let (mut session, device) = open();
-    session.set_request_timeout(Duration::from_secs(5));
-    StatusReplies::headset_off().script(&device);
-
-    let started = Instant::now();
-    let (result, _) = execute(&mut session, &["status"], &RunOptions::default());
-    let elapsed = started.elapsed();
-
-    result.expect("status succeeds");
-    assert!(elapsed >= Duration::from_millis(900), "{elapsed:?}");
-    assert!(elapsed < Duration::from_millis(2500), "{elapsed:?}");
-    assert_eq!(session.request_timeout(), Duration::from_secs(5));
+fn other_ranges_are_usage_errors_exit_2() {
+    assert_eq!(usage_exit_code(&["balance", "13"]), 2);
+    assert_eq!(usage_exit_code(&["tones", "3"]), 2);
+    assert_eq!(usage_exit_code(&["sleep", "60"]), 2);
+    assert_eq!(usage_exit_code(&["gate", "loud"]), 2);
+    assert_eq!(usage_exit_code(&["mix", "chat", "50"]), 2);
+    assert_eq!(usage_exit_code(&["nonsense"]), 2);
 }
 
 #[test]
-fn ghub_running_exits_4_and_names_lghub_agent() {
-    for error in [
-        CliError::Opening(DeviceError::GHubRunning),
-        CliError::Device(DeviceError::GHubRunning),
+fn every_setting_command_sends_its_setting_and_confirms() {
+    let cases: [(&[&str], Setting, &str); 8] = [
+        (
+            &["balance", "6"],
+            Setting::Balance { value: 6 },
+            "balance 6",
+        ),
+        (
+            &["gate", "night"],
+            Setting::NoiseGate(Gate::Night),
+            "gate night",
+        ),
+        (
+            &["volume", "30"],
+            Setting::Volume { percent: 30 },
+            "volume 30",
+        ),
+        (
+            &["brightness", "80"],
+            Setting::LedBrightness { percent: 80 },
+            "brightness 80",
+        ),
+        (
+            &["sleep", "never"],
+            Setting::SleepAfter { minutes: 0 },
+            "sleep never",
+        ),
+        (
+            &["sleep", "15"],
+            Setting::SleepAfter { minutes: 15 },
+            "sleep 15",
+        ),
+        (&["tones", "2"], Setting::Tones { value: 2 }, "tones 2"),
+        (&["gate", "off"], Setting::NoiseGate(Gate::Off), "gate off"),
+    ];
+    for (args, setting, line) in cases {
+        let outcome = run_with(args, FakeDaemon::replying([Response::Done]));
+        outcome.result.expect("the setting succeeds");
+        assert_eq!(outcome.requests, [Request::Set { setting }], "{args:?}");
+        assert_eq!(outcome.stdout, format!("{line}\n"), "{args:?}");
+    }
+}
+
+#[test]
+fn status_json_matches_the_ipc_status() {
+    let received = status();
+    let outcome = run_with(
+        &["status", "--json"],
+        FakeDaemon::replying([Response::Status(received.clone())]),
+    );
+    outcome.result.expect("status succeeds");
+    assert_eq!(outcome.requests, [Request::Status]);
+    let printed: Value = serde_json::from_str(&outcome.stdout).expect("json");
+    assert_eq!(printed, serde_json::to_value(&received).expect("json"));
+    assert_eq!(printed["headset"], "in_use");
+    assert_eq!(outcome.stdout.matches("\"headset\"").count(), 1);
+}
+
+#[test]
+fn status_human_shows_headset_battery_profile_and_autoswitch() {
+    let outcome = run_with(
+        &["status"],
+        FakeDaemon::replying([Response::Status(status())]),
+    );
+    outcome.result.expect("status succeeds");
+    let text = outcome.stdout;
+    for expected in [
+        "connection:  connected",
+        "headset:     in_use",
+        "battery:     85% (discharging)",
+        "profile:     gaming",
+        "auto-switch: on, active",
+        "focus:       game.exe",
+        "sidetone:    40%",
+        "noise gate:  night",
+        "sleep:       never",
+        "stream mix:  output 80%, game 50%, voice 70% muted",
     ] {
-        let message = error.to_string();
-
-        assert_eq!(error.exit_code(), 4);
-        assert!(message.contains("lghub_agent.exe"), "{message}");
-        assert!(message.contains("tray"), "{message}");
-        assert!(!message.contains('\n'), "{message}");
+        assert!(text.contains(expected), "{expected:?} missing from\n{text}");
     }
+}
+
+#[test]
+fn status_human_says_unknown_for_what_the_daemon_does_not_know() {
+    let mut unknown = status();
+    unknown.headset = Headset::Unknown;
+    unknown.battery = None;
+    unknown.active_profile = None;
+    unknown.focus = FocusStatus {
+        available: false,
+        app: None,
+    };
+    unknown.auto_switch = AutoSwitchStatus {
+        enabled: false,
+        active: false,
+        error: None,
+    };
+    let outcome = run_with(
+        &["status"],
+        FakeDaemon::replying([Response::Status(unknown)]),
+    );
+    outcome.result.expect("status succeeds");
+    for expected in [
+        "headset:     unknown",
+        "battery:     unknown",
+        "profile:     none",
+        "auto-switch: off",
+        "focus:       unavailable",
+    ] {
+        assert!(
+            outcome.stdout.contains(expected),
+            "{expected:?} missing from\n{}",
+            outcome.stdout
+        );
+    }
+}
+
+#[test]
+fn daemon_not_running_exits_6() {
+    let outcome = run_with(
+        &["status"],
+        FakeDaemon::failing(TransportError::DaemonNotRunning),
+    );
+    assert_eq!(exit_code(&outcome), 6);
+    assert_eq!(
+        message(&outcome),
+        "ogh-daemon is not running; start it or enable its service"
+    );
+}
+
+#[test]
+fn a_version_mismatch_exits_6_with_its_own_message() {
+    let outcome = run_with(
+        &["status"],
+        FakeDaemon::failing(TransportError::VersionMismatch { daemon: 9 }),
+    );
+    assert_eq!(exit_code(&outcome), 6);
+    assert_eq!(
+        message(&outcome),
+        TransportError::VersionMismatch { daemon: 9 }.to_string()
+    );
+}
+
+#[test]
+fn a_missing_endpoint_exits_6_after_the_standard_text() {
+    let error = CliError::Endpoint(TransportError::XdgRuntimeDirUnset);
+    assert_eq!(error.exit_code(), 6);
+    assert_eq!(
+        error.to_string(),
+        "ogh-daemon is not running; start it or enable its service (XDG_RUNTIME_DIR is not set)"
+    );
+}
+
+#[test]
+fn other_transport_errors_exit_5() {
+    let outcome = run_with(
+        &["status"],
+        FakeDaemon::failing(TransportError::Io(
+            "ogh-daemon closed the connection".into(),
+        )),
+    );
+    assert_eq!(exit_code(&outcome), 5);
+}
+
+#[test]
+fn ghub_running_exits_4() {
+    let outcome = run_with(
+        &["sidetone", "40"],
+        FakeDaemon::replying([error(ErrorKind::GhubRunning, "G Hub is running")]),
+    );
+    assert_eq!(exit_code(&outcome), 4);
+    assert_eq!(message(&outcome), "G Hub is running");
 }
 
 #[test]
 fn not_found_exits_3() {
-    let error = CliError::Opening(DeviceError::NotFound);
-
-    assert_eq!(error.exit_code(), 3);
-    assert!(!error.to_string().contains('\n'));
+    let outcome = run_with(
+        &["sidetone", "40"],
+        FakeDaemon::replying([error(ErrorKind::NotConnected, "no base station found")]),
+    );
+    assert_eq!(exit_code(&outcome), 3);
+    assert_eq!(message(&outcome), "no base station found");
 }
 
 #[test]
-fn device_error_exits_5() {
-    for device_error in [
-        DeviceError::Timeout,
-        DeviceError::Disconnected,
-        DeviceError::HeadsetDisconnected,
-        DeviceError::Rejected {
-            feature_index: 6,
-            code: 5,
-        },
-        DeviceError::Io("boom".into()),
-        DeviceError::NotAllowed {
-            feature: FeatureId::BATTERY_SOC,
-            function: 1,
-        },
-        DeviceError::Refused {
-            feature: FeatureId::HEADSET_SIDETONE,
-            function: 1,
-            reason: Refusal::Params,
-        },
+fn every_other_error_kind_exits_5() {
+    for kind in [
+        ErrorKind::VersionMismatch,
+        ErrorKind::BadRequest,
+        ErrorKind::HeadsetOff,
+        ErrorKind::InvalidValue,
+        ErrorKind::NoSuchProfile,
+        ErrorKind::ConfigUnavailable,
+        ErrorKind::Device,
     ] {
-        let error = CliError::Device(device_error);
-
-        assert_eq!(error.exit_code(), 5, "{error}");
-        assert!(!error.to_string().contains('\n'));
+        let outcome = run_with(
+            &["profile", "apply", "x"],
+            FakeDaemon::replying([error(kind, "refused")]),
+        );
+        assert_eq!(exit_code(&outcome), 5, "{kind:?}");
+        assert_eq!(message(&outcome), "refused");
     }
 }
 
 #[test]
-fn unplugged_base_station_exits_5_with_a_message() {
-    let (mut session, device) = open();
-    device.push_failure();
-
-    let (result, _) = execute(&mut session, &["status"], &RunOptions::default());
-
-    let error = result.expect_err("status fails");
-    assert_eq!(error.exit_code(), 5);
-    assert!(error.to_string().contains("disconnected"), "{error}");
+fn an_unexpected_response_exits_5() {
+    let outcome = run_with(&["status"], FakeDaemon::replying([Response::Done]));
+    assert_eq!(exit_code(&outcome), 5);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
-fn permission_denied_when_opening_explains_udev_on_linux() {
-    let error = CliError::Opening(DeviceError::AccessDenied("Permission denied".into()));
-
-    assert_eq!(error.exit_code(), 5);
-    if cfg!(target_os = "linux") {
-        let message = error.to_string();
-        assert!(message.contains("udev"), "{message}");
-        assert!(message.contains("hidraw"), "{message}");
-    }
-    assert!(!error.to_string().contains('\n'));
-}
-
-#[test]
-fn other_open_failures_get_no_permission_hint() {
-    let error = CliError::Opening(DeviceError::Io("unexpected reply: too short".into()));
-
-    assert_eq!(error.exit_code(), 5);
-    let message = error.to_string();
-    assert!(!message.contains("udev"), "{message}");
-    assert!(!message.contains("hidraw"), "{message}");
-}
-
-#[test]
-fn sidetone_out_of_range_exits_2() {
-    for value in ["101", "255", "256", "-1", "abc", ""] {
-        let error = Cli::try_parse_from(["ogh", "sidetone", value])
-            .err()
-            .unwrap_or_else(|| panic!("{value:?} was accepted"));
-
-        assert_eq!(error.exit_code(), 2, "{value:?}");
-    }
-    for value in ["0", "68", "100"] {
-        assert!(Cli::try_parse_from(["ogh", "sidetone", value]).is_ok());
-    }
-}
-
-#[test]
-fn unknown_command_exits_2() {
-    let error = Cli::try_parse_from(["ogh", "reboot"])
-        .err()
-        .expect("rejected");
-
-    assert_eq!(error.exit_code(), 2);
-}
-
-#[test]
-fn sidetone_writes_like_ghub() {
-    let (mut session, device) = open();
-    device.push_frame(fixture_frame(SIDETONE, 3));
-    device.push_frame(fixture_frame(SIDETONE, 4));
-    device.push_frame(frame_from_hex(SIDETONE_LEVEL_FOUR));
-
-    let (result, out) = execute(&mut session, &["sidetone", "68"], &RunOptions::default());
-
-    result.expect("sidetone succeeds");
-    let writes = device.writes();
-    assert_eq!(writes[writes.len() - 2], fixture_frame(SIDETONE, 2));
-    assert_eq!(
-        writes[writes.len() - 1],
-        fixture_frame(LAUNCH, SIDETONE_GET_REQUEST)
+fn access_denied_explains_udev_on_linux() {
+    let outcome = run_with(
+        &["status"],
+        FakeDaemon::replying([error(
+            ErrorKind::NotConnected,
+            "cannot open the base station: Permission denied (os error 13)",
+        )]),
     );
-    assert_eq!(out, "sidetone: 67%\n");
+    assert_eq!(exit_code(&outcome), 3);
+    let text = message(&outcome);
+    assert!(text.contains("udev"), "{text}");
+    assert!(text.contains("046d:0b0b"), "{text}");
 }
 
 #[test]
-fn features_table_lists_launch_features() {
-    let (mut session, _) = open();
-
-    let (result, out) = execute(&mut session, &["features"], &RunOptions::default());
-
-    result.expect("features succeeds");
-    let lines: Vec<Vec<&str>> = out
-        .lines()
-        .map(|line| line.split_whitespace().collect())
-        .collect();
-    assert_eq!(lines[0], ["index", "id", "name", "version"]);
-    assert_eq!(lines.len(), 1 + 24);
-    assert_eq!(lines[1], ["0", "0x0000", "Root", "0"]);
-    assert_eq!(lines[3], ["2", "0x010A", "GenericDfu", "6"]);
-    assert_eq!(lines[4], ["3", "0x0102", "unknown", "1"]);
-    assert_eq!(lines[10], ["9", "0x0604", "HeadsetSidetone", "2"]);
-    assert_eq!(lines[24], ["23", "0x0807", "unknown", "1"]);
-}
-
-fn script_dock_cycle(device: &ScriptedTransport) {
-    for line in [2, 3, 4, 6, 14, 15, 20] {
-        device.push_frame(fixture_frame(DOCK_CYCLE, line));
-    }
-}
-
-fn bounded(max_events: usize) -> RunOptions {
-    RunOptions {
-        max_events: Some(max_events),
-        ..RunOptions::default()
-    }
-}
-
-#[test]
-fn watch_prints_dock_cycle_events() {
-    let (mut session, device) = open();
-    script_dock_cycle(&device);
-
-    let (result, out) = execute(&mut session, &["watch"], &bounded(7));
-
-    result.expect("watch succeeds");
-    assert_eq!(
-        out,
-        "headset: in-use\n\
-         battery: 100%\n\
-         bluetooth devices: 1\n\
-         mixer inputs: 0x0e\n\
-         balance: 6\n\
-         headset: not in use\n\
-         battery: 100% charging\n"
+fn other_not_connected_messages_get_no_permission_hint() {
+    let outcome = run_with(
+        &["status"],
+        FakeDaemon::replying([error(ErrorKind::NotConnected, "no base station found")]),
     );
+    assert!(!message(&outcome).contains("udev"));
 }
 
-#[test]
-fn watch_json_prints_one_object_per_line() {
-    let (mut session, device) = open();
-    script_dock_cycle(&device);
+fn bands(eq: &Eq) -> Vec<(u16, Option<f32>, f32)> {
+    eq.bands
+        .iter()
+        .map(|b| (b.freq_hz, b.q, b.gain_db))
+        .collect()
+}
 
-    let (result, out) = execute(&mut session, &["watch", "--json"], &bounded(7));
+fn card(equalizer: &eq::Equalizer) -> Vec<(u16, Option<f32>, f32)> {
+    equalizer
+        .bands
+        .iter()
+        .map(|b| (b.freq_hz, b.q, b.gain_db))
+        .collect()
+}
 
-    result.expect("watch succeeds");
-    let events: Vec<Value> = out
-        .lines()
-        .map(|line| serde_json::from_str(line).expect("one json object per line"))
-        .collect();
-    assert_eq!(
-        events,
+fn sent_eq(outcome: &Outcome) -> Eq {
+    match &outcome.requests[..] {
         [
-            json!({"event": "headset", "in_use": true}),
-            json!({"event": "battery", "percent": 100, "status": "discharging"}),
-            json!({"event": "bluetooth_devices", "count": 1}),
-            json!({"event": "mixer_inputs", "mask": 14}),
-            json!({"event": "balance", "value": 6}),
-            json!({"event": "headset", "in_use": false}),
-            json!({"event": "battery", "percent": 100, "status": "charging"}),
-        ]
-    );
-}
-
-#[test]
-fn watch_prints_sidetone_events_as_percent() {
-    let (mut session, device) = open();
-    device.push_frame(fixture_frame(SIDETONE, 4));
-
-    let (result, out) = execute(&mut session, &["watch"], &bounded(1));
-
-    result.expect("watch succeeds");
-    assert_eq!(out, "sidetone: 67%\n");
-}
-
-fn script_session_b_settings(device: &ScriptedTransport) {
-    for (fixture, line) in [
-        ("session-b/small-settings", 4),
-        ("session-b/small-settings", 22),
-        ("session-b/small-settings", 32),
-        ("session-b/mixer", 4),
-        ("session-b/eq-mic", 4),
-        ("session-b/eq-headphone", 6),
-    ] {
-        device.push_frame(fixture_frame(fixture, line));
-    }
-}
-
-#[test]
-fn watch_prints_session_b_setting_events() {
-    let (mut session, device) = open();
-    script_session_b_settings(&device);
-
-    let (result, out) = execute(&mut session, &["watch"], &bounded(6));
-
-    result.expect("watch succeeds");
-    assert_eq!(
-        out,
-        "volume: 0%\n\
-         sleep after: 30 min\n\
-         tones: 2\n\
-         stream mix: stream 13%, mic out 50% muted, game 50%, bluetooth 50% muted, voice 50%\n\
-         noise gate: night\n\
-         headphone eq: custom slot 3 changed\n"
-    );
-}
-
-#[test]
-fn watch_json_prints_session_b_setting_events() {
-    let (mut session, device) = open();
-    script_session_b_settings(&device);
-
-    let (result, out) = execute(&mut session, &["watch", "--json"], &bounded(6));
-
-    result.expect("watch succeeds");
-    let events: Vec<Value> = out
-        .lines()
-        .map(|line| serde_json::from_str(line).expect("one json object per line"))
-        .collect();
-    let channel = |percent: u8, muted: bool| json!({"percent": percent, "muted": muted});
-    assert_eq!(
-        events[0],
-        json!({"event": "volume", "percent": 0, "muted": false})
-    );
-    assert_eq!(events[1], json!({"event": "sleep_after", "minutes": 30}));
-    assert_eq!(events[2], json!({"event": "tones", "value": 2}));
-    assert_eq!(
-        events[3],
-        json!({
-            "event": "stream_mix",
-            "stream": channel(13, false),
-            "inputs": {
-                "mic_out": channel(50, true),
-                "game": channel(50, false),
-                "bluetooth": channel(50, true),
-                "voice": channel(50, false),
+            Request::Set {
+                setting: Setting::HeadphoneEq(eq) | Setting::MicEq(eq),
             },
-        })
-    );
-    assert_eq!(events[4], json!({"event": "noise_gate", "mode": "night"}));
-    assert_eq!(events[5]["event"], "eq");
-    assert_eq!(events[5]["instance"], "headphone");
-    assert_eq!(events[5]["slot"], 3);
-    assert_eq!(
-        events[5]["bands"][0],
-        json!({"freq_hz": 20, "q": 0.6875, "gain_db": -5.0})
-    );
-}
-
-const VOLUME_FULL_MUTED_EVENT: &str = "020c060008001f0115";
-const NOISE_GATE_UNKNOWN_EVENT: &str = "020c0400160003";
-
-fn script_remaining_setting_branches(device: &ScriptedTransport) {
-    for (fixture, line) in [
-        ("session-b/small-settings", 45),
-        ("session-b/small-settings", 25),
-        ("session-b/small-settings", 7),
-    ] {
-        device.push_frame(fixture_frame(fixture, line));
+        ] => eq.clone(),
+        other => panic!("expected one EQ set, got {other:?}"),
     }
-    device.push_frame(frame_from_hex(VOLUME_FULL_MUTED_EVENT));
-    device.push_frame(frame_from_hex(NOISE_GATE_UNKNOWN_EVENT));
 }
 
 #[test]
-fn watch_prints_all_never_muted_and_unknown_settings() {
-    let (mut session, device) = open();
-    script_remaining_setting_branches(&device);
-
-    let (result, out) = execute(&mut session, &["watch"], &bounded(5));
-
-    result.expect("watch succeeds");
-    assert_eq!(
-        out,
-        "tones: all\n\
-         sleep after: never\n\
-         volume: 52%\n\
-         volume: 100% muted\n\
-         noise gate: other-3\n"
+fn eq_preset_gaming_sends_the_curated_card() {
+    let outcome = run_with(
+        &["eq", "headphone", "preset", "gaming"],
+        FakeDaemon::replying([Response::Done]),
     );
+    outcome.result.as_ref().expect("preset succeeds");
+    assert!(matches!(
+        outcome.requests[..],
+        [Request::Set {
+            setting: Setting::HeadphoneEq(_)
+        }]
+    ));
+    assert_eq!(bands(&sent_eq(&outcome)), card(&eq::HEADPHONE_GAMING));
+    assert_eq!(outcome.stdout, "eq headphone preset gaming\n");
 }
 
 #[test]
-fn watch_json_prints_all_never_muted_and_unknown_settings() {
-    let (mut session, device) = open();
-    script_remaining_setting_branches(&device);
+fn every_curated_preset_sends_its_card() {
+    let cases: [(&str, &str, &eq::Equalizer); 6] = [
+        ("headphone", "default", &eq::HEADPHONE_DEFAULT),
+        ("headphone", "media", &eq::HEADPHONE_MEDIA),
+        ("mic", "default", &eq::MIC_DEFAULT),
+        ("mic", "competition", &eq::MIC_COMPETITION),
+        ("mic", "broadcast", &eq::MIC_BROADCAST),
+        ("headphone", "gaming", &eq::HEADPHONE_GAMING),
+    ];
+    for (target, preset, expected) in cases {
+        let outcome = run_with(
+            &["eq", target, "preset", preset],
+            FakeDaemon::replying([Response::Done]),
+        );
+        outcome.result.as_ref().expect("preset succeeds");
+        assert_eq!(
+            bands(&sent_eq(&outcome)),
+            card(expected),
+            "{target} {preset}"
+        );
+    }
+}
 
-    let (result, out) = execute(&mut session, &["watch", "--json"], &bounded(5));
+#[test]
+fn a_preset_of_the_other_instance_is_a_usage_error_without_a_request() {
+    for args in [
+        ["eq", "headphone", "preset", "competition"],
+        ["eq", "headphone", "preset", "broadcast"],
+        ["eq", "mic", "preset", "gaming"],
+        ["eq", "mic", "preset", "media"],
+    ] {
+        let outcome = run_with(&args, FakeDaemon::default());
+        assert_eq!(exit_code(&outcome), 2, "{args:?}");
+        assert!(outcome.requests.is_empty(), "{args:?}");
+    }
+}
 
-    result.expect("watch succeeds");
-    let events: Vec<Value> = out
-        .lines()
-        .map(|line| serde_json::from_str(line).expect("one json object per line"))
+#[test]
+fn eq_gains_sends_a_graphic_card_on_the_instances_frequencies() {
+    let outcome = run_with(
+        &[
+            "eq", "mic", "gains", "-1", "0", "0", "0", "0", "0", "0", "0", "1", "2",
+        ],
+        FakeDaemon::replying([Response::Done]),
+    );
+    outcome.result.as_ref().expect("gains succeed");
+    assert!(matches!(
+        outcome.requests[..],
+        [Request::Set {
+            setting: Setting::MicEq(_)
+        }]
+    ));
+    let sent = sent_eq(&outcome);
+    let expected: Vec<EqBand> = eq::MIC_DEFAULT
+        .bands
+        .iter()
+        .zip([-1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0])
+        .map(|(band, gain_db)| EqBand {
+            freq_hz: band.freq_hz,
+            q: None,
+            gain_db,
+        })
         .collect();
+    assert_eq!(sent.bands, expected);
+    assert_eq!(outcome.stdout, "eq mic gains -1 0 0 0 0 0 0 0 1 2\n");
+}
+
+#[test]
+fn eq_gains_on_the_headphones_use_their_frequencies_without_q() {
+    let outcome = run_with(
+        &[
+            "eq",
+            "headphone",
+            "gains",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "-1",
+            "-2",
+            "-3",
+            "-4",
+        ],
+        FakeDaemon::replying([Response::Done]),
+    );
+    outcome.result.as_ref().expect("gains succeed");
+    assert!(matches!(
+        outcome.requests[..],
+        [Request::Set {
+            setting: Setting::HeadphoneEq(_)
+        }]
+    ));
+    let expected: Vec<(u16, Option<f32>, f32)> = eq::HEADPHONE_DEFAULT
+        .bands
+        .iter()
+        .zip([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, -1.0, -2.0, -3.0, -4.0])
+        .map(|(band, gain_db)| (band.freq_hz, None, gain_db))
+        .collect();
+    assert_eq!(bands(&sent_eq(&outcome)), expected);
     assert_eq!(
-        events,
-        [
-            json!({"event": "tones", "value": 1}),
-            json!({"event": "sleep_after", "minutes": null}),
-            json!({"event": "volume", "percent": 52, "muted": false}),
-            json!({"event": "volume", "percent": 100, "muted": true}),
-            json!({"event": "noise_gate", "mode": "other-3"}),
-        ]
+        outcome.stdout,
+        "eq headphone gains 1 2 3 4 5 6 -1 -2 -3 -4\n"
     );
 }
 
 #[test]
-fn watch_stops_cleanly_when_interrupted() {
-    let (mut session, _) = open();
-    let options = RunOptions::default();
-    options.stop.store(true, Ordering::SeqCst);
-
-    let (result, out) = execute(&mut session, &["watch"], &options);
-
-    result.expect("interrupt is not an error");
-    assert_eq!(out, "");
+fn eq_gains_needs_ten_values_in_range() {
+    let nine = [
+        "eq", "mic", "gains", "0", "0", "0", "0", "0", "0", "0", "0", "0",
+    ];
+    assert_eq!(usage_exit_code(&nine), 2);
+    let eleven = [
+        "eq", "mic", "gains", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0",
+    ];
+    assert_eq!(usage_exit_code(&eleven), 2);
+    let high = [
+        "eq", "mic", "gains", "6.5", "0", "0", "0", "0", "0", "0", "0", "0", "0",
+    ];
+    assert_eq!(usage_exit_code(&high), 2);
+    let low = [
+        "eq",
+        "headphone",
+        "gains",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "-6.5",
+    ];
+    assert_eq!(usage_exit_code(&low), 2);
+    let edges = [
+        "ogh",
+        "eq",
+        "headphone",
+        "gains",
+        "-6",
+        "6",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+    ];
+    assert!(Cli::try_parse_from(edges).is_ok());
 }
 
 #[test]
-fn watch_reports_an_unplugged_base_station() {
-    let (mut session, device) = open();
-    device.push_frame(fixture_frame(DOCK_CYCLE, 2));
-    device.push_failure();
+fn profile_link_lowercases_nothing_itself() {
+    let outcome = run_with(
+        &["profile", "link", "Gaming", "Game.EXE"],
+        FakeDaemon::replying([Response::Done]),
+    );
+    outcome.result.expect("link succeeds");
+    assert_eq!(
+        outcome.requests,
+        [Request::LinkApp {
+            profile: "Gaming".to_string(),
+            app: "Game.EXE".to_string(),
+        }]
+    );
+    assert_eq!(outcome.stdout, "linked Game.EXE to Gaming\n");
+}
 
-    let (result, out) = execute(&mut session, &["watch"], &RunOptions::default());
+#[test]
+fn profile_commands_send_their_requests_and_confirm() {
+    let cases: [(&[&str], Request, &str); 5] = [
+        (
+            &["profile", "apply", "gaming"],
+            Request::ApplyProfile {
+                name: "gaming".into(),
+            },
+            "applied profile gaming",
+        ),
+        (
+            &["profile", "save", "gaming"],
+            Request::SaveProfile {
+                name: "gaming".into(),
+            },
+            "saved profile gaming",
+        ),
+        (
+            &["profile", "delete", "gaming"],
+            Request::DeleteProfile {
+                name: "gaming".into(),
+            },
+            "deleted profile gaming",
+        ),
+        (
+            &["profile", "default", "gaming"],
+            Request::SetDefaultProfile {
+                name: "gaming".into(),
+            },
+            "default profile gaming",
+        ),
+        (
+            &["profile", "unlink", "game.exe"],
+            Request::UnlinkApp {
+                app: "game.exe".into(),
+            },
+            "unlinked game.exe",
+        ),
+    ];
+    for (args, request, line) in cases {
+        let outcome = run_with(args, FakeDaemon::replying([Response::Done]));
+        outcome.result.expect("the profile command succeeds");
+        assert_eq!(outcome.requests, [request], "{args:?}");
+        assert_eq!(outcome.stdout, format!("{line}\n"), "{args:?}");
+    }
+}
 
-    let error = result.expect_err("watch fails");
-    assert_eq!(out, "headset: in-use\n");
-    assert_eq!(error.exit_code(), 5);
-    assert!(error.to_string().contains("disconnected"), "{error}");
+fn profiles() -> Vec<ProfileInfo> {
+    vec![
+        ProfileInfo {
+            name: "gaming".to_string(),
+            apps: vec!["game.exe".to_string(), "other.exe".to_string()],
+            is_default: false,
+            settings: ProfileSettings::default(),
+        },
+        ProfileInfo {
+            name: "media".to_string(),
+            apps: vec![],
+            is_default: true,
+            settings: ProfileSettings::default(),
+        },
+    ]
+}
+
+#[test]
+fn profile_list_marks_the_default_and_lists_linked_apps() {
+    let outcome = run_with(
+        &["profile", "list"],
+        FakeDaemon::replying([Response::Profiles(profiles())]),
+    );
+    outcome.result.expect("list succeeds");
+    assert_eq!(outcome.requests, [Request::ListProfiles]);
+    assert_eq!(
+        outcome.stdout,
+        "  gaming (apps: game.exe, other.exe)\n* media\n"
+    );
+}
+
+#[test]
+fn profile_list_with_no_profiles_prints_nothing() {
+    let outcome = run_with(
+        &["profile", "list"],
+        FakeDaemon::replying([Response::Profiles(vec![])]),
+    );
+    outcome.result.expect("list succeeds");
+    assert_eq!(outcome.stdout, "");
+}
+
+#[test]
+fn profile_list_json_prints_the_profiles() {
+    let outcome = run_with(
+        &["profile", "list", "--json"],
+        FakeDaemon::replying([Response::Profiles(profiles())]),
+    );
+    outcome.result.expect("list succeeds");
+    let printed: Value = serde_json::from_str(&outcome.stdout).expect("json");
+    assert_eq!(printed, serde_json::to_value(profiles()).expect("json"));
+}
+
+#[test]
+fn autoswitch_sends_the_flag() {
+    for (word, enabled) in [("on", true), ("off", false)] {
+        let outcome = run_with(
+            &["autoswitch", word],
+            FakeDaemon::replying([Response::Done]),
+        );
+        outcome.result.expect("autoswitch succeeds");
+        assert_eq!(outcome.requests, [Request::SetAutoSwitch { enabled }]);
+        assert_eq!(outcome.stdout, format!("auto-switch {word}\n"));
+    }
+}
+
+#[test]
+fn features_prints_one_line_per_feature() {
+    let features = vec![
+        Feature {
+            index: 3,
+            id: 0x1004,
+            name: Some("battery".to_string()),
+            version: 1,
+        },
+        Feature {
+            index: 7,
+            id: 0xabcd,
+            name: None,
+            version: 2,
+        },
+    ];
+    let outcome = run_with(
+        &["features"],
+        FakeDaemon::replying([Response::Features(features)]),
+    );
+    outcome.result.expect("features succeeds");
+    assert_eq!(outcome.stdout, "3 0x1004 battery 1\n7 0xabcd ? 2\n");
+}
+
+fn mix_set(outcome: &Outcome) -> StreamMixSetting {
+    match &outcome.requests[..] {
+        [
+            Request::Status,
+            Request::Set {
+                setting: Setting::StreamMix(mix),
+            },
+        ] => *mix,
+        other => panic!("expected status then a stream mix set, got {other:?}"),
+    }
+}
+
+fn run_mix(args: &[&str], status: Status) -> Outcome {
+    run_with(
+        args,
+        FakeDaemon::replying([Response::Status(status), Response::Done]),
+    )
+}
+
+#[test]
+fn mix_changes_only_the_named_channels_level() {
+    let outcome = run_mix(&["mix", "game", "20"], status());
+    outcome.result.as_ref().expect("mix succeeds");
+    assert_eq!(
+        mix_set(&outcome),
+        StreamMixSetting {
+            game: channel(20, false),
+            ..mix()
+        }
+    );
+    assert_eq!(outcome.stdout, "mix game 20\n");
+}
+
+#[test]
+fn mix_mute_and_unmute_leave_the_level_alone() {
+    let outcome = run_mix(&["mix", "output", "mute"], status());
+    outcome.result.as_ref().expect("mute succeeds");
+    assert_eq!(
+        mix_set(&outcome),
+        StreamMixSetting {
+            output: channel(80, true),
+            ..mix()
+        }
+    );
+    assert_eq!(outcome.stdout, "mix output muted\n");
+
+    let outcome = run_mix(&["mix", "voice", "unmute"], status());
+    outcome.result.as_ref().expect("unmute succeeds");
+    assert_eq!(
+        mix_set(&outcome),
+        StreamMixSetting {
+            voice: channel(70, false),
+            ..mix()
+        }
+    );
+    assert_eq!(outcome.stdout, "mix voice unmuted\n");
+}
+
+fn without_mix(connection: Connection) -> Status {
+    let mut status = status();
+    status.connection = connection;
+    status.settings.profile.stream_mix = None;
+    status
+}
+
+#[test]
+fn mix_without_a_known_stream_mix_reports_the_connection() {
+    let cases = [
+        (Connection::NotFound, 3, "base station not found"),
+        (Connection::GhubRunning, 4, "G Hub is running"),
+        (
+            Connection::AccessDenied {
+                message: "denied".into(),
+            },
+            5,
+            "access denied: denied",
+        ),
+        (
+            Connection::Error {
+                message: "broken".into(),
+            },
+            5,
+            "error: broken",
+        ),
+        (Connection::Connected, 5, "stream mix is not known yet"),
+    ];
+    for (connection, code, text) in cases {
+        let outcome = run_with(
+            &["mix", "game", "20"],
+            FakeDaemon::replying([Response::Status(without_mix(connection.clone()))]),
+        );
+        assert_eq!(exit_code(&outcome), code, "{connection:?}");
+        assert!(message(&outcome).starts_with(text), "{connection:?}");
+        assert_eq!(outcome.requests, [Request::Status]);
+    }
+}
+
+fn watch_daemon(notifications: Vec<Result<Notification, TransportError>>) -> FakeDaemon {
+    FakeDaemon {
+        notifications,
+        ..FakeDaemon::default()
+    }
+}
+
+#[test]
+fn watch_prints_one_line_per_status_change_and_ends_when_the_daemon_closes() {
+    let mut docked = status();
+    docked.headset = Headset::Docked;
+    docked.battery = Some(Battery {
+        percent: 90,
+        charge: Charge::Charging,
+    });
+    docked.active_profile = None;
+    let daemon = watch_daemon(vec![
+        Ok(Notification::Status(status())),
+        Ok(Notification::Status(docked)),
+    ]);
+    let outcome = run_with(&["watch"], daemon);
+    outcome.result.as_ref().expect("watch ends cleanly");
+    assert!(outcome.requests.is_empty());
+    assert_eq!(
+        outcome.stdout,
+        "connection connected | headset in_use | battery 85% | profile gaming\n\
+         connection connected | headset docked | battery 90% | profile none\n"
+    );
+}
+
+#[test]
+fn watch_json_prints_single_line_statuses() {
+    let daemon = watch_daemon(vec![Ok(Notification::Status(status()))]);
+    let outcome = run_with(&["watch", "--json"], daemon);
+    outcome.result.as_ref().expect("watch ends cleanly");
+    assert_eq!(outcome.stdout.lines().count(), 1);
+    let printed: Value = serde_json::from_str(outcome.stdout.trim()).expect("json");
+    assert_eq!(printed, serde_json::to_value(status()).expect("json"));
+}
+
+#[test]
+fn watch_maps_a_broken_stream_like_any_transport_error() {
+    let daemon = watch_daemon(vec![
+        Ok(Notification::Status(status())),
+        Err(TransportError::Io("broken pipe".to_string())),
+    ]);
+    let outcome = run_with(&["watch"], daemon);
+    assert_eq!(exit_code(&outcome), 5);
+    assert_eq!(outcome.stdout.lines().count(), 1);
+}
+
+#[test]
+fn watch_exits_6_when_the_daemon_is_not_running() {
+    let daemon = FakeDaemon {
+        subscribe_error: Some(TransportError::DaemonNotRunning),
+        ..FakeDaemon::default()
+    };
+    let outcome = run_with(&["watch"], daemon);
+    assert_eq!(exit_code(&outcome), 6);
 }

@@ -6,8 +6,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use common::{
-    LAUNCH, LAUNCH_OPEN_REPLIES, LAUNCH_OPEN_REQUESTS, all_fixtures, feature_ids, fixture_path,
-    frame_at, frame_from_hex, load, sent_calls,
+    LAUNCH, LAUNCH_OPEN_REPLIES, LAUNCH_OPEN_REQUESTS, SHORT_TIMEOUT, all_fixtures, empty_reply_to,
+    feature_ids, fixture_path, frame_at, frame_from_hex, index_in, load, open_scripted, send_built,
+    sent_calls,
 };
 use ogh_device::allowlist::Allowlist;
 use ogh_device::testing::{self, ScriptedTransport};
@@ -16,6 +17,7 @@ use ogh_protocol::features::advanced_para_eq::{
     self, EqBand, EqInstance, Equalizer, MAX_GAIN_DB, MAX_Q, MIN_GAIN_DB, MIN_Q,
 };
 use ogh_protocol::features::auto_sleep::{self, SleepAfter};
+use ogh_protocol::features::battery;
 use ogh_protocol::features::headset_mix::{self, GameVoiceBalance};
 use ogh_protocol::features::led_brightness;
 use ogh_protocol::features::mixer_audio::{self, MixChannel, MixInput, MixLevel, StreamMix};
@@ -23,7 +25,7 @@ use ogh_protocol::features::noise_gate::{self, NoiseGate};
 use ogh_protocol::features::sidetone::{self, Sidetone};
 use ogh_protocol::features::tones::{self, Tones};
 use ogh_protocol::features::volume::{self, VolumeLevel};
-use ogh_protocol::{A50X_PREFIX, Message, RangeError, encode, request};
+use ogh_protocol::{A50X_PREFIX, Message, ParseError, RangeError, encode, request};
 
 const DOCK_CYCLE: &str = "session-a/dock-cycle";
 const BATTERY_REQUEST: usize = 38;
@@ -42,15 +44,6 @@ const DOCK_MIC_TEST_EVENT: usize = 15;
 const MEMFAULT_EVENT: usize = 21;
 const MEMFAULT_FIRST_FRAGMENT: usize = 23;
 const MEMFAULT_CONTINUATION: usize = 24;
-const SHORT_TIMEOUT: Duration = Duration::from_millis(100);
-
-fn open_scripted() -> (Session<ScriptedTransport>, ScriptedTransport) {
-    let device = ScriptedTransport::with_launch_discovery();
-    let handle = device.clone();
-    let mut session = Session::with_transport(device).expect("open sequence succeeds");
-    session.set_request_timeout(SHORT_TIMEOUT);
-    (session, handle)
-}
 
 fn assert_not_allowlisted_without_writing(
     session: &mut Session<ScriptedTransport>,
@@ -489,6 +482,159 @@ fn set_custom_eq_to_the_custom_slot_is_sent() {
     assert_eq!(device.writes().last(), Some(&ghub_write));
 }
 
+#[test]
+fn try_call_reports_a_range_error_as_invalid_value() {
+    let (mut session, device) = open_scripted();
+    let before = device.writes().len();
+    let range_error = sidetone::set_request(0, Sidetone(7)).unwrap_err();
+
+    let result = session.try_call(FeatureId::HEADSET_SIDETONE, |index| {
+        sidetone::set_request(index, Sidetone(7))
+    });
+
+    assert_eq!(
+        result,
+        Err(DeviceError::InvalidValue(range_error.to_string()))
+    );
+    assert_eq!(device.writes().len(), before);
+}
+
+#[test]
+fn try_call_sends_a_valid_message() {
+    let (mut session, device) = open_scripted();
+    let index = index_in(&session, FeatureId::HEADSET_SIDETONE);
+    let msg = sidetone::set_request(index, Sidetone(3)).unwrap();
+    let frame = encode(A50X_PREFIX, 0, &msg).unwrap();
+    device.push_frame(empty_reply_to(&frame));
+
+    let result = session.try_call(FeatureId::HEADSET_SIDETONE, |index| {
+        sidetone::set_request(index, Sidetone(3))
+    });
+
+    assert_eq!(result, Ok(vec![]));
+    assert_eq!(device.writes().last(), Some(&frame));
+}
+
+#[test]
+fn invalid_value_displays_its_detail() {
+    assert_eq!(
+        DeviceError::InvalidValue("EQ gain 7 is above the maximum of 6".to_string()).to_string(),
+        "invalid value: EQ gain 7 is above the maximum of 6"
+    );
+}
+
+#[test]
+fn read_parses_the_reply() {
+    let (mut session, device) = open_scripted();
+    device.push_frame(frame_at(LAUNCH, BATTERY_REPLY));
+
+    let battery = session.read(FeatureId::BATTERY_SOC, battery::get_request, battery::parse);
+
+    assert_eq!(battery.map(|b| b.percent()), Ok(100));
+    assert_eq!(
+        device.writes().last(),
+        Some(&frame_at(LAUNCH, BATTERY_REQUEST))
+    );
+}
+
+#[test]
+fn read_maps_a_bad_reply() {
+    let (mut session, device) = open_scripted();
+    device.push_frame(frame_at(LAUNCH, BATTERY_REPLY));
+
+    let result = session.read(
+        FeatureId::BATTERY_SOC,
+        battery::get_request,
+        advanced_para_eq::parse_custom_reply,
+    );
+
+    let parse_error = ParseError::TooShort {
+        expected: 51,
+        actual: 3,
+    };
+    assert_eq!(
+        result,
+        Err(DeviceError::Io(format!("unexpected reply: {parse_error}")))
+    );
+}
+
+#[test]
+fn custom_eq_read_with_slot_other_than_3_is_refused() {
+    let (mut session, device) = open_scripted();
+
+    for params in [
+        &[1, 0][..],
+        &[1, 2],
+        &[1, 4],
+        &[0, 0xff],
+        &[2, 3],
+        &[1],
+        &[1, 3, 0],
+        &[],
+    ] {
+        assert_params_refused_without_writing(
+            &mut session,
+            &device,
+            FeatureId::ADVANCED_PARA_EQ,
+            1,
+            params,
+        );
+    }
+}
+
+#[test]
+fn custom_eq_read_of_each_instance_is_sent() {
+    for (instance, reply_line) in [(EqInstance::Mic, 71), (EqInstance::Headphone, 83)] {
+        let (mut session, device) = open_scripted();
+        device.push_frame(frame_at(LAUNCH, reply_line));
+
+        let equalizer = session.read(
+            FeatureId::ADVANCED_PARA_EQ,
+            |index| advanced_para_eq::get_custom_request(index, instance),
+            advanced_para_eq::parse_custom_reply,
+        );
+
+        assert!(equalizer.is_ok(), "{instance:?}");
+        assert_eq!(
+            device.writes().last(),
+            Some(&frame_at(LAUNCH, reply_line - 1)),
+            "{instance:?}"
+        );
+    }
+}
+
+#[test]
+fn mixer_read_for_output_1_is_refused() {
+    let (mut session, device) = open_scripted();
+
+    for params in [&[1][..], &[0xff], &[0, 0], &[]] {
+        assert_params_refused_without_writing(
+            &mut session,
+            &device,
+            FeatureId::MIXER_AUDIO,
+            5,
+            params,
+        );
+    }
+}
+
+#[test]
+fn mixer_settings_read_is_sent() {
+    let (mut session, device) = open_scripted();
+    device.push_frame(frame_at(LAUNCH, 111));
+
+    let mix = session
+        .read(
+            FeatureId::MIXER_AUDIO,
+            mixer_audio::get_settings_request,
+            mixer_audio::parse_settings_reply,
+        )
+        .unwrap();
+
+    assert_eq!(mix.stream.level, MixLevel(0x1a));
+    assert_eq!(device.writes().last(), Some(&frame_at(LAUNCH, 110)));
+}
+
 const SESSION_B_SETTINGS: [&str; 6] = [
     "session-b/sidetone",
     "session-b/balance",
@@ -507,10 +653,6 @@ fn params_at(name: &str, line: usize) -> Vec<u8> {
 fn with_our_sw_id(mut frame: [u8; 64]) -> [u8; 64] {
     frame[5] = frame[5] & 0xf0 | OUR_SW_ID;
     frame
-}
-
-fn empty_reply_to(request: &[u8; 64]) -> [u8; 64] {
-    frame_from_hex(&format!("020c0300{:02x}{:02x}", request[4], request[5]))
 }
 
 #[test]
@@ -536,29 +678,6 @@ fn every_call_ghub_sent_in_session_b_settings_passes_the_rules() {
             );
         }
     }
-}
-
-fn send_built(
-    session: &mut Session<ScriptedTransport>,
-    device: &ScriptedTransport,
-    id: FeatureId,
-    msg: Message,
-    case: &str,
-) {
-    let frame = encode(A50X_PREFIX, 0, &msg).expect("fits one frame");
-    device.push_frame(empty_reply_to(&frame));
-
-    assert_eq!(session.call(id, |_| msg), Ok(vec![]), "{case}");
-    assert_eq!(device.writes().last(), Some(&frame), "{case}");
-}
-
-fn index_in(session: &Session<ScriptedTransport>, id: FeatureId) -> u8 {
-    session
-        .features()
-        .iter()
-        .find(|feature| feature.id == id)
-        .map(|feature| feature.index)
-        .expect("feature in the launch table")
 }
 
 fn send_every_accepted_value(

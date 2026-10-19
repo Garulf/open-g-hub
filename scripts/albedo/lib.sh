@@ -4,8 +4,6 @@ albedo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$albedo_dir/../.." && pwd)
 
 albedo_host=${OGH_ALBEDO_HOST:-albedo}
-scratch_win='C:\Users\Garulf\AppData\Local\Temp\open-g-hub'
-scratch_sftp='/C:/Users/Garulf/AppData/Local/Temp/open-g-hub'
 pcap_header_bytes=24
 usbpcap_exe='C:\Program Files\USBPcap\USBPcapCMD.exe'
 
@@ -21,6 +19,25 @@ to_sftp_path() {
     local path=${1//\\//}
     [[ $path =~ ^[A-Za-z]: ]] && path="/$path"
     printf '%s' "$path"
+}
+
+# The remote scratch directory as a Windows path: OGH_ALBEDO_SCRATCH when set, otherwise
+# open-g-hub under the remote user's temp directory, created if missing.
+remote_scratch() {
+    local dir=${OGH_ALBEDO_SCRATCH:-}
+    if [[ -z $dir ]]; then
+        dir=$(ps_remote <<'PS'
+$dir = Join-Path ([IO.Path]::GetTempPath()) 'open-g-hub'
+$null = New-Item -ItemType Directory -Force -Path $dir
+$dir
+PS
+)
+    fi
+    if [[ -z $dir || $dir == *"'"* ]]; then
+        echo "unusable remote scratch directory: '$dir'" >&2
+        return 1
+    fi
+    printf '%s' "$dir"
 }
 
 remote_size() {

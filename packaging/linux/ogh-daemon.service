@@ -1,0 +1,12 @@
+[Unit]
+Description=open-g-hub daemon for the Astro A50 X
+After=graphical-session.target pipewire.service
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=ogh-daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

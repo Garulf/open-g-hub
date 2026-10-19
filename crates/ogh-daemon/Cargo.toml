@@ -1,0 +1,31 @@
+[package]
+name = "ogh-daemon"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+
+[lib]
+name = "ogh_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ogh-daemon"
+path = "src/main.rs"
+
+[dependencies]
+crossbeam-channel = "0.5"
+ctrlc = { version = "3.5.2", features = ["termination"] }
+directories = "6"
+ogh-audio = { path = "../ogh-audio" }
+ogh-device = { path = "../ogh-device" }
+ogh-focus = { path = "../ogh-focus" }
+ogh-ipc = { path = "../ogh-ipc" }
+ogh-protocol = { path = "../ogh-protocol" }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+ogh-device = { path = "../ogh-device", features = ["testing"] }
+tempfile = "3"
