@@ -26,10 +26,10 @@ impl Controller {
         if let Some(reply) = pending.reply {
             let _ = reply.send(response);
         }
+        self.apply_if_wanted();
         if self.pending.is_empty() {
             self.run_deferred_saves();
         }
-        self.apply_if_wanted();
     }
 
     pub(super) fn run_deferred_saves(&mut self) {

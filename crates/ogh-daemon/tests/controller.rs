@@ -681,6 +681,10 @@ fn headset_changes_reach_the_auto_switch_and_its_outcome_shows_in_status() {
     inputs
         .send(Input::Device(connected(snapshot(0, NoiseGate::Off))))
         .unwrap();
+    assert_eq!(
+        next_command(),
+        Command::Configure(AudioSwitchConfig::default())
+    );
     assert_eq!(next_command(), Command::Headset(Headset::InUse));
 
     inputs
@@ -898,4 +902,135 @@ fn hand_edited_audio_names_reach_the_auto_switch_at_the_next_change() {
 
     drop(inputs);
     thread.join().unwrap();
+}
+
+#[test]
+fn deferred_save_captures_the_reapplied_profile() {
+    let harness = Harness::start_with(|store| {
+        store.save_profile("app", sidetone_profile(80)).unwrap();
+        store.link_app("app", "a.exe").unwrap();
+        store.save_profile("manual", sidetone_profile(50)).unwrap();
+    });
+    harness.connect(snapshot(3, NoiseGate::Off));
+
+    harness.focus("a.exe");
+    harness.let_focus_settle();
+    let (id, writes) = harness.write();
+    assert_eq!(writes, vec![DeviceWrite::Sidetone(Sidetone(5))]);
+    assert_eq!(
+        harness.request(Request::ApplyProfile {
+            name: "manual".to_string()
+        }),
+        Response::Done
+    );
+    let save = harness.send(Request::SaveProfile {
+        name: "x".to_string(),
+    });
+
+    harness.update(DeviceUpdate::WriteDone { id, result: Ok(()) });
+    let (reapply, writes) = harness.write();
+    assert_eq!(writes, vec![DeviceWrite::Sidetone(Sidetone(3))]);
+    assert!(
+        save.recv_timeout(QUIET).is_err(),
+        "saved before the reapply"
+    );
+
+    harness.update(DeviceUpdate::WriteDone {
+        id: reapply,
+        result: Ok(()),
+    });
+    assert_eq!(save.recv_timeout(WAIT), Ok(Response::Done));
+    let saved = harness
+        .profiles()
+        .into_iter()
+        .find(|profile| profile.name == "x")
+        .expect("the saved profile");
+    assert_eq!(saved.settings.sidetone_percent, Some(50));
+    harness.no_write();
+    harness.finish();
+}
+
+#[test]
+fn default_profile_creation_reconfigures_auto_switch() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("config.toml");
+    let store = Store::open(&path);
+    let (devices, _device) = unbounded();
+    let (commands, command_rx) = unbounded();
+    let (inputs, input_rx) = unbounded();
+    let controller = Controller::new(store, devices, Instant::now).with_auto_switch(commands);
+    let thread = thread::spawn(move || controller.run(input_rx));
+    assert_eq!(
+        command_rx.recv_timeout(WAIT),
+        Ok(Command::Configure(AudioSwitchConfig::default()))
+    );
+
+    std::fs::write(&path, "[audio_switch]\nenabled = true\n").unwrap();
+    inputs
+        .send(Input::Device(connected(snapshot(0, NoiseGate::Off))))
+        .unwrap();
+    let mut received = Vec::new();
+    while let Ok(command) = command_rx.recv_timeout(QUIET) {
+        received.push(command);
+    }
+    assert!(
+        received.contains(&Command::Configure(AudioSwitchConfig {
+            enabled: true,
+            ..AudioSwitchConfig::default()
+        })),
+        "{received:?}"
+    );
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("[profiles.default]"), "{saved}");
+
+    drop(inputs);
+    thread.join().unwrap();
+}
+
+#[test]
+fn partial_default_is_not_filled_after_the_default_changes() {
+    let harness = Harness::start_with(|store| {
+        store
+            .save_profile("other", ProfileSettings::default())
+            .unwrap();
+    });
+    let docked = docked_with_mix();
+    harness.connect(docked.clone());
+    let partial = profile_settings(&docked);
+    let settings_of = |name: &str| {
+        harness
+            .profiles()
+            .into_iter()
+            .find(|profile| profile.name == name)
+            .expect("the profile")
+            .settings
+    };
+    assert_eq!(settings_of("default"), partial);
+
+    assert_eq!(
+        harness.request(Request::SetDefaultProfile {
+            name: "other".to_string()
+        }),
+        Response::Done
+    );
+    let in_use = DeviceSnapshot {
+        headset_available: Some(true),
+        sidetone: Some(Sidetone(3)),
+        balance: Some(GameVoiceBalance(6)),
+        noise_gate: Some(NoiseGate::Home),
+        ..docked
+    };
+    harness.update(DeviceUpdate::Refreshed(in_use.clone()));
+    assert_eq!(settings_of("default"), partial);
+    assert_eq!(settings_of("other"), ProfileSettings::default());
+
+    assert_eq!(
+        harness.request(Request::SetDefaultProfile {
+            name: "default".to_string()
+        }),
+        Response::Done
+    );
+    harness.update(DeviceUpdate::Refreshed(in_use));
+    assert_eq!(settings_of("default"), partial, "the capture is finished");
+    harness.finish();
 }

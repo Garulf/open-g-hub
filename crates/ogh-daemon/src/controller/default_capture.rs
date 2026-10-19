@@ -36,6 +36,7 @@ impl Controller {
                 if !is_empty {
                     self.default_capture = DefaultCapture::Done;
                 } else if self.store.save_profile(&name, settings).is_ok() {
+                    self.configure_auto_switch();
                     self.default_capture = if headset_known {
                         DefaultCapture::Done
                     } else {
@@ -47,13 +48,15 @@ impl Controller {
                 if !headset_known {
                     return;
                 }
-                let Some(saved) = config.profiles.get(name) else {
+                let still_default = *name == config.default_profile;
+                let Some(saved) = config.profiles.get(name).filter(|_| still_default) else {
                     self.default_capture = DefaultCapture::Done;
                     return;
                 };
                 let completed = fill_missing(saved.settings.clone(), settings);
                 let name = name.clone();
                 if self.store.save_profile(&name, completed).is_ok() {
+                    self.configure_auto_switch();
                     self.default_capture = DefaultCapture::Done;
                 }
             }
