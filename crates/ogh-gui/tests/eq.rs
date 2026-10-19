@@ -441,3 +441,32 @@ fn mic_eq_uses_the_mic_setting() {
     );
     harness.get_by_role_and_label(Role::Slider, "80 Hz");
 }
+
+#[test]
+fn mixed_q_eq_sends_nothing_when_just_shown() {
+    let mut mixed = gaming();
+    mixed.bands[4].q = None;
+    let mut harness = harness(headphone_gui(Some(mixed)));
+    harness.run();
+
+    assert!(harness.state().sent.is_empty());
+}
+
+#[test]
+fn mic_last_band_is_clamped_to_the_maximum_frequency() {
+    let mut harness = harness(mic_gui(Some(convert(&MIC_DEFAULT)), None));
+    harness.run();
+
+    type_into(&mut harness, "Band 10 frequency", "30000");
+
+    let sent = match harness.state().sent.as_slice() {
+        [
+            Request::Set {
+                setting: Setting::MicEq(eq),
+            },
+        ] => eq.clone(),
+        other => panic!("expected one MicEq, got {other:?}"),
+    };
+    assert_eq!(sent.bands[9].freq_hz, card::MAX_FREQ_HZ);
+    assert_eq!(sent.validate(MIC_MIN_FREQ_HZ), Ok(()));
+}

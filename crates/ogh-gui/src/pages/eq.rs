@@ -111,7 +111,12 @@ pub(crate) fn microphone(ui: &mut Ui, state: &mut GuiState, requests: &mut Vec<R
         .status
         .as_ref()
         .and_then(|status| status.settings.profile.noise_gate);
-    if let Some(gate) = noise_gate(ui, current, enabled) {
+    let gate = ui
+        .push_id(("noise_gate", Target::Mic), |ui| {
+            noise_gate(ui, current, enabled)
+        })
+        .inner;
+    if let Some(gate) = gate {
         requests.push(set(Setting::NoiseGate(gate)));
     }
     ui.add_space(8.0);
@@ -141,6 +146,12 @@ fn noise_gate(ui: &mut Ui, current: Option<Gate>, enabled: bool) -> Option<Gate>
 }
 
 fn editor(ui: &mut Ui, state: &mut GuiState, target: Target, requests: &mut Vec<Request>) {
+    ui.push_id(("eq", target), |ui| {
+        editor_body(ui, state, target, requests)
+    });
+}
+
+fn editor_body(ui: &mut Ui, state: &mut GuiState, target: Target, requests: &mut Vec<Request>) {
     let enabled = state.shared.can_write();
     let current = state
         .shared
@@ -192,8 +203,8 @@ fn mode_switch(ui: &mut Ui, current: EqMode, enabled: bool) -> Option<EqMode> {
 fn bands(ui: &mut Ui, state: &mut GuiState, target: Target, eq: &Eq, enabled: bool) -> Option<Eq> {
     let parametric = mode_of(eq) == EqMode::Parametric;
     let mut edited = eq.clone();
-    ui.spacing_mut().slider_width = 140.0;
     eframe::egui::ScrollArea::horizontal().show(ui, |ui| {
+        ui.spacing_mut().slider_width = 140.0;
         ui.horizontal_top(|ui| {
             for index in 0..eq.bands.len() {
                 ui.push_id(("eq", target, index), |ui| {
@@ -237,6 +248,7 @@ fn band(
 
     let (low, high) = freq_bounds(eq, index, target.min_freq_hz());
     let mut freq = shown.freq_hz;
+    let freq_before = freq;
     let response = ui.add_enabled(
         enabled,
         DragValue::new(&mut freq)
@@ -247,11 +259,12 @@ fn band(
             .suffix(" Hz"),
     );
     name(ui, &response, format!("Band {} frequency", index + 1));
-    if freq != shown.freq_hz {
+    if freq != freq_before {
         eq.bands[index].freq_hz = freq.clamp(low, high);
     }
 
     let mut q = shown.q.unwrap_or(CURATED_Q);
+    let q_before = q;
     let response = ui.add_enabled(
         enabled,
         DragValue::new(&mut q)
@@ -263,7 +276,7 @@ fn band(
             .prefix("Q "),
     );
     name(ui, &response, format!("Band {} Q", index + 1));
-    if Some(q) != shown.q {
+    if q != q_before {
         eq.bands[index].q = Some(q.clamp(MIN_Q, MAX_Q));
     }
 }
