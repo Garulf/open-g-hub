@@ -446,6 +446,7 @@ dependencies = [
  "ctrlc",
  "directories",
  "ogh-device",
+ "ogh-focus",
  "ogh-ipc",
  "ogh-protocol",
  "serde",
@@ -466,6 +467,15 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "windows-sys",
+]
+
+[[package]]
+name = "ogh-focus"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "tempfile",
  "windows-sys",
 ]
 

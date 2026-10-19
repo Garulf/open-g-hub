@@ -47,9 +47,7 @@ pub fn run(paths: Paths) -> Result<(), String> {
     let controller = Controller::new(store, commands.clone(), Instant::now);
     thread::spawn(move || controller.run(input_rx));
     ipc_server::serve(server, inputs.clone());
-    let _ = inputs.send(Input::FocusUnavailable(
-        "focus detection is not wired yet".to_string(),
-    ));
+    start_focus_watcher(inputs.clone());
     tracing::info!(
         "ogh-daemon {} listening on {endpoint:?}",
         env!("CARGO_PKG_VERSION")
@@ -67,6 +65,25 @@ fn bridge_device_updates(updates: Receiver<DeviceUpdate>, inputs: Sender<Input>)
             }
         }
     });
+}
+
+fn start_focus_watcher(inputs: Sender<Input>) {
+    let (focus_tx, focus_rx) = unbounded();
+    match ogh_focus::spawn(focus_tx) {
+        Ok(_) => {
+            thread::spawn(move || {
+                for app in focus_rx {
+                    if inputs.send(Input::Focus(app)).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+        Err(reason) => {
+            tracing::info!("focus switching is unavailable: {reason}");
+            let _ = inputs.send(Input::FocusUnavailable(reason.to_string()));
+        }
+    }
 }
 
 fn shut_down(commands: &Sender<DeviceCommand>, worker: JoinHandle<()>, endpoint: &Endpoint) -> ! {

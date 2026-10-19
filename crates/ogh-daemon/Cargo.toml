@@ -17,6 +17,7 @@ crossbeam-channel = "0.5"
 ctrlc = { version = "3.5.2", features = ["termination"] }
 directories = "6"
 ogh-device = { path = "../ogh-device" }
+ogh-focus = { path = "../ogh-focus" }
 ogh-ipc = { path = "../ogh-ipc" }
 ogh-protocol = { path = "../ogh-protocol" }
 serde = { version = "1.0.229", features = ["derive"] }
