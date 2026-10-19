@@ -272,6 +272,27 @@ fn status_does_not_hide_a_timeout_while_the_headset_is_in_use() {
 }
 
 #[test]
+fn an_in_use_headset_keeps_the_full_timeout_for_optional_reads() {
+    let (mut session, device) = open();
+    session.set_request_timeout(Duration::from_millis(1500));
+    StatusReplies {
+        battery: None,
+        ..StatusReplies::in_use()
+    }
+    .script(&device);
+
+    let started = Instant::now();
+    let (result, _) = execute(&mut session, &["status"], &RunOptions::default());
+    let elapsed = started.elapsed();
+
+    assert!(matches!(
+        result,
+        Err(CliError::Device(DeviceError::Timeout))
+    ));
+    assert!(elapsed >= Duration::from_millis(1400), "{elapsed:?}");
+}
+
+#[test]
 fn headset_leaving_during_status_reads_as_disconnected() {
     let (mut session, device) = open();
     device.push_frame(frame_from_hex(MIC_TEST_IN_USE));

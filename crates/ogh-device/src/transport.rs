@@ -1,4 +1,6 @@
+use std::fs::OpenOptions;
 use std::io::ErrorKind;
+use std::path::Path;
 
 use hidapi::{DeviceInfo, HidApi, HidDevice, HidError};
 use ogh_protocol::FRAME_LEN;
@@ -28,21 +30,41 @@ pub struct HidTransport {
 
 impl HidTransport {
     pub(crate) fn open() -> Result<Self, DeviceError> {
-        let api = HidApi::new().map_err(open_error)?;
+        let api = HidApi::new().map_err(|e| open_error(e, || false))?;
         let info = control_interface(api.device_list()).ok_or(DeviceError::NotFound)?;
-        let device = info.open_device(&api).map_err(open_error)?;
+        let device = info.open_device(&api).map_err(|e| {
+            open_error(e, || {
+                info.path()
+                    .to_str()
+                    .is_ok_and(|path| os_denies_access(Path::new(path)))
+            })
+        })?;
         Ok(Self { device, _api: api })
     }
 }
 
-fn open_error(error: HidError) -> DeviceError {
+/// hidapi's Linux backend reports a refused open as a message string with
+/// no error kind, so the system is asked about `path` itself. Only an
+/// `IoError` that carries the kind (other backends) is trusted directly.
+fn open_error(error: HidError, path_is_denied: impl FnOnce() -> bool) -> DeviceError {
     let detail = format!("cannot open the base station: {error}");
-    match error {
-        HidError::IoError { error } if error.kind() == ErrorKind::PermissionDenied => {
-            DeviceError::AccessDenied(detail)
-        }
-        _ => DeviceError::Io(detail),
+    let denied_by_kind = matches!(
+        &error,
+        HidError::IoError { error } if error.kind() == ErrorKind::PermissionDenied
+    );
+    if denied_by_kind || path_is_denied() {
+        DeviceError::AccessDenied(detail)
+    } else {
+        DeviceError::Io(detail)
     }
+}
+
+fn os_denies_access(path: &Path) -> bool {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .is_err_and(|e| e.kind() == ErrorKind::PermissionDenied)
 }
 
 /// Usage page and usage when the platform reports them, else interface 8.
@@ -137,20 +159,93 @@ mod tests {
     }
 
     #[test]
-    fn permission_denied_is_told_apart_from_other_open_errors() {
+    fn an_io_error_of_kind_permission_denied_is_access_denied() {
         assert!(matches!(
-            open_error(io_error(ErrorKind::PermissionDenied)),
+            open_error(io_error(ErrorKind::PermissionDenied), || false),
+            DeviceError::AccessDenied(_)
+        ));
+    }
+
+    #[test]
+    fn a_hidapi_open_message_is_access_denied_only_when_the_path_is() {
+        let message =
+            "failed to open device with path /dev/hidraw3: Permission denied (os error 13)";
+        let refused = || HidError::HidApiError {
+            message: message.into(),
+        };
+
+        assert!(matches!(
+            open_error(refused(), || true),
             DeviceError::AccessDenied(_)
         ));
         assert!(matches!(
-            open_error(io_error(ErrorKind::NotFound)),
+            open_error(refused(), || false),
             DeviceError::Io(_)
         ));
+    }
+
+    #[test]
+    fn other_open_errors_stay_io() {
         assert!(matches!(
-            open_error(HidError::HidApiError {
-                message: "init failed".into()
-            }),
+            open_error(io_error(ErrorKind::NotFound), || false),
             DeviceError::Io(_)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn os_denies_access_to_a_file_the_user_cannot_open() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("ogh-access-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let locked = dir.join("locked");
+        let open = dir.join("open");
+        fs::write(&locked, b"").unwrap();
+        fs::write(&open, b"").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let running_as_root = fs::File::open(&locked).is_ok();
+
+        let locked_denied = os_denies_access(&locked);
+        let open_denied = os_denies_access(&open);
+        let missing_denied = os_denies_access(&dir.join("missing"));
+        fs::remove_dir_all(&dir).unwrap();
+
+        if !running_as_root {
+            assert!(locked_denied);
+        }
+        assert!(!open_denied);
+        assert!(!missing_denied);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn hidapi_refusing_a_locked_path_is_access_denied() {
+        use std::ffi::CString;
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let locked = std::env::temp_dir().join(format!("ogh-hidapi-{}", std::process::id()));
+        fs::write(&locked, b"").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let running_as_root = fs::File::open(&locked).is_ok();
+        let api = HidApi::new_without_enumerate().unwrap();
+        let path = CString::new(locked.to_str().unwrap()).unwrap();
+
+        let refusal = api.open_path(&path).err();
+        let mapped = refusal.map(|e| {
+            open_error(e, || {
+                path.to_str().is_ok_and(|p| os_denies_access(Path::new(p)))
+            })
+        });
+        fs::remove_file(&locked).unwrap();
+
+        if !running_as_root {
+            assert!(
+                matches!(mapped, Some(DeviceError::AccessDenied(_))),
+                "{mapped:?}"
+            );
+        }
     }
 }
