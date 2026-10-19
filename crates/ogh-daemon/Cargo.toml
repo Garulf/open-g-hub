@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 directories = "6"
 ogh-ipc = { path = "../ogh-ipc" }
+ogh-protocol = { path = "../ogh-protocol" }
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1"
 

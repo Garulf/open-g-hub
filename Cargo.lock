@@ -390,6 +390,7 @@ version = "0.1.0"
 dependencies = [
  "directories",
  "ogh-ipc",
+ "ogh-protocol",
  "serde",
  "tempfile",
  "toml",
