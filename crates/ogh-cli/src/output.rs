@@ -1,10 +1,15 @@
 //! Text and JSON renderings of what the commands read.
 
 use ogh_device::{Event, FeatureInfo};
+use ogh_protocol::features::advanced_para_eq::{CustomEq, EqInstance};
+use ogh_protocol::features::auto_sleep::{AutoSleep, SleepAfter};
 use ogh_protocol::features::battery::{Battery, ChargeStatus};
 use ogh_protocol::features::headset_mix::GameVoiceBalance;
+use ogh_protocol::features::mixer_audio::{MixChannel, MixInput, StreamMix};
 use ogh_protocol::features::noise_gate::NoiseGate;
 use ogh_protocol::features::sidetone::Sidetone;
+use ogh_protocol::features::tones::Tones;
+use ogh_protocol::features::volume::Volume;
 use serde_json::{Value, json};
 
 const UNKNOWN: &str = "unknown";
@@ -81,8 +86,7 @@ impl Status {
             ),
             (
                 "noise gate",
-                self.noise_gate
-                    .map_or_else(unknown, |gate| noise_gate_name(gate).to_string()),
+                self.noise_gate.map_or_else(unknown, noise_gate_name),
             ),
             ("firmware", self.firmware.clone()),
         ];
@@ -109,12 +113,13 @@ fn is_on_dock(status: ChargeStatus) -> bool {
     matches!(status, ChargeStatus::Charging | ChargeStatus::Full)
 }
 
-pub fn noise_gate_name(gate: NoiseGate) -> &'static str {
+pub fn noise_gate_name(gate: NoiseGate) -> String {
     match gate {
-        NoiseGate::Off => "off",
-        NoiseGate::Home => "home",
-        NoiseGate::Night => "night",
-        NoiseGate::Tournament => "tournament",
+        NoiseGate::Off => "off".to_string(),
+        NoiseGate::Home => "home".to_string(),
+        NoiseGate::Night => "night".to_string(),
+        NoiseGate::Tournament => "tournament".to_string(),
+        NoiseGate::Other(code) => format!("other-{code}"),
     }
 }
 
@@ -180,6 +185,17 @@ pub fn event_line(event: &Event) -> String {
         Event::BluetoothDevices(count) => format!("bluetooth devices: {count}"),
         Event::MixerInputs(mask) => format!("mixer inputs: {mask:#04x}"),
         Event::NoiseGate(gate) => format!("noise gate: {}", noise_gate_name(*gate)),
+        Event::MixerSettings(mix) => format!("stream mix: {}", stream_mix_text(mix)),
+        Event::Volume(volume) => format!("volume: {}", volume_text(*volume)),
+        Event::AutoSleep(AutoSleep { sleep_after, .. }) => {
+            format!("sleep after: {}", sleep_after_text(*sleep_after))
+        }
+        Event::Tones(tones) => format!("tones: {}", tones_name(*tones)),
+        Event::CustomEq(eq) => format!(
+            "{} eq: custom slot {} changed",
+            eq_instance_name(eq.instance),
+            eq.slot
+        ),
     }
 }
 
@@ -196,5 +212,101 @@ pub fn event_json(event: &Event) -> Value {
         Event::BluetoothDevices(count) => json!({"event": "bluetooth_devices", "count": count}),
         Event::MixerInputs(mask) => json!({"event": "mixer_inputs", "mask": mask}),
         Event::NoiseGate(gate) => json!({"event": "noise_gate", "mode": noise_gate_name(*gate)}),
+        Event::MixerSettings(mix) => stream_mix_json(mix),
+        Event::Volume(volume) => json!({
+            "event": "volume",
+            "percent": volume.level.to_percent(),
+            "muted": volume.muted,
+        }),
+        Event::AutoSleep(AutoSleep { sleep_after, .. }) => json!({
+            "event": "sleep_after",
+            "minutes": (*sleep_after != SleepAfter::NEVER).then_some(sleep_after.0),
+        }),
+        Event::Tones(tones) => json!({"event": "tones", "value": tones.0}),
+        Event::CustomEq(eq) => custom_eq_json(eq),
     }
+}
+
+fn input_name(input: MixInput) -> &'static str {
+    match input {
+        MixInput::MicOut => "mic_out",
+        MixInput::Game => "game",
+        MixInput::Bluetooth => "bluetooth",
+        MixInput::Voice => "voice",
+    }
+}
+
+fn channel_text(name: &str, channel: MixChannel) -> String {
+    let muted = if channel.muted { " muted" } else { "" };
+    format!("{name} {}%{muted}", channel.level.to_percent())
+}
+
+fn stream_mix_text(mix: &StreamMix) -> String {
+    let inputs = MixInput::ALL
+        .map(|input| channel_text(&input_name(input).replace('_', " "), mix.input(input)));
+    format!(
+        "{}, {}",
+        channel_text("stream", mix.stream),
+        inputs.join(", ")
+    )
+}
+
+fn channel_json(channel: MixChannel) -> Value {
+    json!({"percent": channel.level.to_percent(), "muted": channel.muted})
+}
+
+fn stream_mix_json(mix: &StreamMix) -> Value {
+    let inputs: serde_json::Map<String, Value> = MixInput::ALL
+        .iter()
+        .map(|&input| {
+            (
+                input_name(input).to_string(),
+                channel_json(mix.input(input)),
+            )
+        })
+        .collect();
+    json!({"event": "stream_mix", "stream": channel_json(mix.stream), "inputs": inputs})
+}
+
+fn volume_text(volume: Volume) -> String {
+    let muted = if volume.muted { " muted" } else { "" };
+    format!("{}%{muted}", volume.level.to_percent())
+}
+
+fn sleep_after_text(sleep_after: SleepAfter) -> String {
+    if sleep_after == SleepAfter::NEVER {
+        "never".to_string()
+    } else {
+        format!("{} min", sleep_after.0)
+    }
+}
+
+fn tones_name(tones: Tones) -> String {
+    if tones == Tones::ALL {
+        "all".to_string()
+    } else {
+        tones.0.to_string()
+    }
+}
+
+fn eq_instance_name(instance: EqInstance) -> &'static str {
+    match instance {
+        EqInstance::Mic => "mic",
+        EqInstance::Headphone => "headphone",
+    }
+}
+
+fn custom_eq_json(eq: &CustomEq) -> Value {
+    let bands: Vec<Value> = eq
+        .equalizer
+        .bands
+        .iter()
+        .map(|band| json!({"freq_hz": band.freq_hz, "q": band.q, "gain_db": band.gain_db}))
+        .collect();
+    json!({
+        "event": "eq",
+        "instance": eq_instance_name(eq.instance),
+        "slot": eq.slot,
+        "bands": bands,
+    })
 }

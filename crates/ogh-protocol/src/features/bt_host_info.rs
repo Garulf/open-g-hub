@@ -4,8 +4,9 @@ use crate::frame::{Message, request};
 
 const GET_CONNECTED_COUNT: u8 = 0;
 
-/// The name and address calls are not modelled: their replies are personal
-/// data.
+/// Guessed meaning of fn0: getConnectedDeviceNum, read from the reply
+/// content. The name and address calls are not modelled: their replies are
+/// personal data.
 pub fn connected_count_request(feature_index: u8) -> Message {
     request(feature_index, GET_CONNECTED_COUNT, &[])
 }

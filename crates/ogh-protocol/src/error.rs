@@ -63,20 +63,80 @@ pub(crate) fn require_len(params: &[u8], expected: usize) -> Result<(), ParseErr
     Ok(())
 }
 
-/// A value above the range the device accepts, caught before anything is sent.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A value outside what the device was seen accepting, caught before
+/// anything is sent.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RangeError {
-    pub value: u8,
-    pub max: u8,
+    /// The setting and its unit, for example "EQ gain (dB)".
+    pub what: &'static str,
+    pub value: f32,
+    pub allowed: Allowed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Allowed {
+    /// Inclusive bounds.
+    Between {
+        min: f32,
+        max: f32,
+    },
+    OneOf(&'static [u8]),
+}
+
+impl RangeError {
+    pub(crate) fn check_max(what: &'static str, value: u8, max: u8) -> Result<(), Self> {
+        Self::check_between(what, f32::from(value), 0.0, f32::from(max))
+    }
+
+    /// NaN is outside every range.
+    pub(crate) fn check_between(
+        what: &'static str,
+        value: f32,
+        min: f32,
+        max: f32,
+    ) -> Result<(), Self> {
+        if (min..=max).contains(&value) {
+            return Ok(());
+        }
+        Err(Self {
+            what,
+            value,
+            allowed: Allowed::Between { min, max },
+        })
+    }
+
+    pub(crate) fn check_one_of(
+        what: &'static str,
+        value: u8,
+        allowed: &'static [u8],
+    ) -> Result<(), Self> {
+        if allowed.contains(&value) {
+            return Ok(());
+        }
+        Err(Self {
+            what,
+            value: f32::from(value),
+            allowed: Allowed::OneOf(allowed),
+        })
+    }
 }
 
 impl fmt::Display for RangeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "value {} is above the maximum of {}",
-            self.value, self.max
-        )
+        let Self { what, value, .. } = self;
+        match self.allowed {
+            Allowed::Between { max, .. } if *value > max => {
+                write!(f, "{what} {value} is above the maximum of {max}")
+            }
+            Allowed::Between { min, .. } if *value < min => {
+                write!(f, "{what} {value} is below the minimum of {min}")
+            }
+            Allowed::Between { min, max } => write!(f, "{what} {value} is outside {min} to {max}"),
+            Allowed::OneOf(allowed) => {
+                let list: Vec<String> = allowed.iter().map(u8::to_string).collect();
+                write!(f, "{what} {value} is not one of {}", list.join(", "))
+            }
+        }
     }
 }
 

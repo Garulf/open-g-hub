@@ -21,20 +21,17 @@ pub struct BalanceInfo {
     pub unknown: [u8; 2],
 }
 
+/// Guessed meaning of fn0: getBalance, read from the reply content.
 pub fn get_request(feature_index: u8) -> Message {
     request(feature_index, GET, &[])
 }
 
 pub fn set_request(feature_index: u8, balance: GameVoiceBalance) -> Result<Message, RangeError> {
-    if balance.0 > MAX_BALANCE {
-        return Err(RangeError {
-            value: balance.0,
-            max: MAX_BALANCE,
-        });
-    }
+    RangeError::check_max("balance", balance.0, MAX_BALANCE)?;
     Ok(request(feature_index, SET, &[balance.0]))
 }
 
+/// Guessed meaning of fn2: getInfo, read from the reply content.
 pub fn info_request(feature_index: u8) -> Message {
     request(feature_index, INFO, &[])
 }

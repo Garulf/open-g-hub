@@ -568,6 +568,80 @@ fn watch_prints_sidetone_events_as_percent() {
     assert_eq!(out, "sidetone: 67%\n");
 }
 
+fn script_session_b_settings(device: &ScriptedTransport) {
+    for (fixture, line) in [
+        ("session-b/small-settings", 4),
+        ("session-b/small-settings", 22),
+        ("session-b/small-settings", 32),
+        ("session-b/mixer", 4),
+        ("session-b/eq-mic", 4),
+        ("session-b/eq-headphone", 6),
+    ] {
+        device.push_frame(fixture_frame(fixture, line));
+    }
+}
+
+#[test]
+fn watch_prints_session_b_setting_events() {
+    let (mut session, device) = open();
+    script_session_b_settings(&device);
+
+    let (result, out) = execute(&mut session, &["watch"], &bounded(6));
+
+    result.expect("watch succeeds");
+    assert_eq!(
+        out,
+        "volume: 0%\n\
+         sleep after: 30 min\n\
+         tones: 2\n\
+         stream mix: stream 13%, mic out 50% muted, game 50%, bluetooth 50% muted, voice 50%\n\
+         noise gate: night\n\
+         headphone eq: custom slot 3 changed\n"
+    );
+}
+
+#[test]
+fn watch_json_prints_session_b_setting_events() {
+    let (mut session, device) = open();
+    script_session_b_settings(&device);
+
+    let (result, out) = execute(&mut session, &["watch", "--json"], &bounded(6));
+
+    result.expect("watch succeeds");
+    let events: Vec<Value> = out
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("one json object per line"))
+        .collect();
+    let channel = |percent: u8, muted: bool| json!({"percent": percent, "muted": muted});
+    assert_eq!(
+        events[0],
+        json!({"event": "volume", "percent": 0, "muted": false})
+    );
+    assert_eq!(events[1], json!({"event": "sleep_after", "minutes": 30}));
+    assert_eq!(events[2], json!({"event": "tones", "value": 2}));
+    assert_eq!(
+        events[3],
+        json!({
+            "event": "stream_mix",
+            "stream": channel(13, false),
+            "inputs": {
+                "mic_out": channel(50, true),
+                "game": channel(50, false),
+                "bluetooth": channel(50, true),
+                "voice": channel(50, false),
+            },
+        })
+    );
+    assert_eq!(events[4], json!({"event": "noise_gate", "mode": "night"}));
+    assert_eq!(events[5]["event"], "eq");
+    assert_eq!(events[5]["instance"], "headphone");
+    assert_eq!(events[5]["slot"], 3);
+    assert_eq!(
+        events[5]["bands"][0],
+        json!({"freq_hz": 20, "q": 0.6875, "gain_db": -5.0})
+    );
+}
+
 #[test]
 fn watch_stops_cleanly_when_interrupted() {
     let (mut session, _) = open();

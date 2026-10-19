@@ -48,6 +48,7 @@ impl ChargeStatus {
     }
 }
 
+/// Guessed meaning of fn0: getBatteryStatus, read from the reply content.
 pub fn get_request(feature_index: u8) -> Message {
     request(feature_index, GET, &[])
 }

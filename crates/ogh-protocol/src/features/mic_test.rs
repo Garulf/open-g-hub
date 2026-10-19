@@ -5,14 +5,17 @@ use crate::frame::{Message, request};
 const GET_STATE: u8 = 6;
 const NOT_CONNECTED: u8 = 0x05;
 
-/// Raw state of the mic test state machine. Only 0 and 5 were captured, so
-/// the meaning of the other values is a guess.
+/// Raw state of the mic test state machine. A G Hub mic test showed the wire
+/// value is G Hub's state ordinal minus one: 0 ready to record, 1 recording,
+/// 2 ready for playback, 3 playing, 4 erasing, 5 not connected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MicTestState(pub u8);
 
 impl MicTestState {
-    /// 5 means not connected (docked or off). Every other value counts as
-    /// in use, because a running mic test reports states other than 0.
+    /// 5 (not connected) came with every dock and power-off, and every other
+    /// value with a lift or power-on, across six transitions on one
+    /// firmware. A running mic test reports 0 to 4, so all of them count as
+    /// in use.
     pub fn is_headset_available(self) -> bool {
         self.0 != NOT_CONNECTED
     }
