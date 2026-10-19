@@ -1,15 +1,24 @@
 #![cfg(unix)]
 
 use std::fs::{File, FileTimes};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::unbounded;
-use ogh_focus::hyprland::{parse_event, resolve, socket_path, spawn_in, watch};
+use ogh_focus::FocusEvent;
+use ogh_focus::hyprland::{
+    parse_event, query_active_window, resolve, socket_path, spawn_in, watch,
+};
 
 const WAIT: Duration = Duration::from_secs(5);
+const RETRY: Duration = Duration::from_millis(20);
+const NO_SOCKET: &str = "focus switching needs Hyprland on Linux (no Hyprland socket found)";
+
+fn focus(app: &str) -> FocusEvent {
+    FocusEvent::Focus(Some(app.to_string()))
+}
 
 #[test]
 fn parses_activewindow() {
@@ -79,9 +88,9 @@ fn watcher_reads_events_from_a_socket() {
     let (mut conn, _) = listener.accept().unwrap();
     conn.write_all(b"activewindow>>CS2,Counter-Strike 2\nworkspace>>2\nactivewindow>>,\nactivewindow>>Discord,General\n")
         .unwrap();
-    assert_eq!(rx.recv_timeout(WAIT), Ok(Some("cs2".to_string())));
-    assert_eq!(rx.recv_timeout(WAIT), Ok(None));
-    assert_eq!(rx.recv_timeout(WAIT), Ok(Some("discord".to_string())));
+    assert_eq!(rx.recv_timeout(WAIT), Ok(focus("cs2")));
+    assert_eq!(rx.recv_timeout(WAIT), Ok(FocusEvent::Focus(None)));
+    assert_eq!(rx.recv_timeout(WAIT), Ok(focus("discord")));
 }
 
 #[test]
@@ -95,10 +104,10 @@ fn watcher_reconnects_after_the_socket_closes() {
     let (mut first, _) = listener.accept().unwrap();
     first.write_all(b"activewindow>>one,t\n").unwrap();
     drop(first);
-    assert_eq!(rx.recv_timeout(WAIT), Ok(Some("one".to_string())));
+    assert_eq!(rx.recv_timeout(WAIT), Ok(focus("one")));
     let (mut second, _) = listener.accept().unwrap();
     second.write_all(b"activewindow>>two,t\n").unwrap();
-    assert_eq!(rx.recv_timeout(WAIT), Ok(Some("two".to_string())));
+    assert_eq!(rx.recv_timeout(WAIT), Ok(focus("two")));
 }
 
 #[test]
@@ -128,7 +137,7 @@ fn watcher_skips_non_utf8_lines() {
     let (mut conn, _) = listener.accept().unwrap();
     conn.write_all(b"activewindow>>\xff\xfe,bad\nactivewindow>>ok,fine\n")
         .unwrap();
-    assert_eq!(rx.recv_timeout(WAIT), Ok(Some("ok".to_string())));
+    assert_eq!(rx.recv_timeout(WAIT), Ok(focus("ok")));
     assert!(rx.try_recv().is_err());
 }
 
@@ -175,5 +184,131 @@ fn watcher_waits_for_hyprland_to_create_its_socket() {
     let (mut conn, _) = listener.accept().unwrap();
     conn.write_all(b"activewindow>>CS2,Counter-Strike 2\n")
         .unwrap();
-    assert_eq!(rx.recv_timeout(WAIT), Ok(Some("cs2".to_string())));
+    let mut event = rx.recv_timeout(WAIT).unwrap();
+    while matches!(event, FocusEvent::Unavailable(_)) {
+        event = rx.recv_timeout(WAIT).unwrap();
+    }
+    assert_eq!(event, focus("cs2"));
+}
+
+fn answer_active_window(dir: &Path, reply: &'static str) -> std::thread::JoinHandle<Vec<u8>> {
+    let listener = UnixListener::bind(dir.join(".socket.sock")).unwrap();
+    std::thread::spawn(move || {
+        let (mut conn, _) = listener.accept().unwrap();
+        let mut request = [0u8; 14];
+        conn.read_exact(&mut request).unwrap();
+        conn.write_all(reply.as_bytes()).unwrap();
+        request.to_vec()
+    })
+}
+
+#[test]
+fn active_window_query_reads_the_class() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = answer_active_window(dir.path(), r#"{"class":"Kitty","title":"x"}"#);
+    assert_eq!(
+        query_active_window(&dir.path().join(".socket.sock")).unwrap(),
+        Some("kitty".to_string())
+    );
+    assert_eq!(server.join().unwrap(), b"j/activewindow");
+}
+
+#[test]
+fn active_window_query_with_no_window_is_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = answer_active_window(dir.path(), "{}");
+    assert_eq!(
+        query_active_window(&dir.path().join(".socket.sock")).unwrap(),
+        None
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn active_window_query_with_an_empty_class_is_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = answer_active_window(dir.path(), r#"{"class":"","title":""}"#);
+    assert_eq!(
+        query_active_window(&dir.path().join(".socket.sock")).unwrap(),
+        None
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn active_window_query_without_a_socket_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(query_active_window(&dir.path().join(".socket.sock")).is_err());
+}
+
+#[test]
+fn watcher_reports_the_focused_window_on_connect() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = answer_active_window(dir.path(), r#"{"class":"firefox","title":"t"}"#);
+    let listener = UnixListener::bind(dir.path().join(".socket2.sock")).unwrap();
+    let (tx, rx) = unbounded();
+    let socket = dir.path().join(".socket2.sock");
+    let _watcher = watch(move || Some(socket.clone()), RETRY, tx);
+    let (_conn, _) = listener.accept().unwrap();
+    assert_eq!(rx.recv_timeout(WAIT), Ok(focus("firefox")));
+    server.join().unwrap();
+}
+
+#[test]
+fn watcher_connects_without_a_command_socket() {
+    let dir = tempfile::tempdir().unwrap();
+    let listener = UnixListener::bind(dir.path().join(".socket2.sock")).unwrap();
+    let (tx, rx) = unbounded();
+    let socket = dir.path().join(".socket2.sock");
+    let _watcher = watch(move || Some(socket.clone()), RETRY, tx);
+    let (mut conn, _) = listener.accept().unwrap();
+    conn.write_all(b"activewindow>>one,t\n").unwrap();
+    assert_eq!(rx.recv_timeout(WAIT), Ok(focus("one")));
+}
+
+#[test]
+fn watcher_reports_unavailable_while_no_hyprland_socket_exists() {
+    let runtime = tempfile::tempdir().unwrap();
+    let (tx, rx) = unbounded();
+    let _watcher = spawn_in(Some(runtime.path().to_path_buf()), RETRY, tx).unwrap();
+    assert_eq!(
+        rx.recv_timeout(WAIT),
+        Ok(FocusEvent::Unavailable(NO_SOCKET.to_string()))
+    );
+    std::thread::sleep(RETRY * 10);
+    assert!(rx.try_recv().is_err(), "a second outage report");
+
+    let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap_or("late".to_string());
+    let dir = runtime.path().join("hypr").join(signature);
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = UnixListener::bind(dir.join(".socket2.sock")).unwrap();
+    let (mut conn, _) = listener.accept().unwrap();
+    conn.write_all(b"activewindow>>kitty,t\n").unwrap();
+    assert_eq!(rx.recv_timeout(WAIT), Ok(focus("kitty")));
+}
+
+#[test]
+fn watcher_reports_each_outage_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".socket2.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let (tx, rx) = unbounded();
+    let socket = path.clone();
+    let _watcher = watch(move || Some(socket.clone()), RETRY, tx);
+    let (mut conn, _) = listener.accept().unwrap();
+    conn.write_all(b"activewindow>>one,t\n").unwrap();
+    assert_eq!(rx.recv_timeout(WAIT), Ok(focus("one")));
+    drop(conn);
+    drop(listener);
+    std::fs::remove_file(&path).unwrap();
+    assert!(matches!(
+        rx.recv_timeout(WAIT),
+        Ok(FocusEvent::Unavailable(_))
+    ));
+    std::thread::sleep(RETRY * 10);
+    assert!(rx.try_recv().is_err(), "a second outage report");
+    let listener = UnixListener::bind(&path).unwrap();
+    let (mut conn, _) = listener.accept().unwrap();
+    conn.write_all(b"activewindow>>two,t\n").unwrap();
+    assert_eq!(rx.recv_timeout(WAIT), Ok(focus("two")));
 }

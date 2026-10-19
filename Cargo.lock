@@ -487,7 +487,9 @@ name = "ogh-focus"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "serde_json",
  "tempfile",
+ "tracing",
  "windows-sys",
 ]
 
