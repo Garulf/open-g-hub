@@ -1,0 +1,5 @@
+//! The `ogh` command line: argument types, the commands and their output.
+
+pub mod commands;
+pub mod error;
+pub mod output;
