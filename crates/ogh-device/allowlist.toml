@@ -251,3 +251,118 @@ reason = "DeviceInfo serial number: personal data"
 feature = 0x0100
 function = 4
 reason = "DeviceInfo factory reset: wipes the device"
+
+[[deny]]
+feature = 0x0101
+function = 1
+reason = "DeviceName setName: persistent rename"
+
+[[deny]]
+feature = 0x0004
+function = 2
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x0004
+function = 3
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x0004
+function = 5
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x0004
+function = 6
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x0004
+function = 8
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x0004
+function = 9
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x020D
+function = 6
+reason = "AdvancedParaEQ name/UUID calls: not supported below v2 (this device has v1)"
+
+[[deny]]
+feature = 0x020D
+function = 7
+reason = "AdvancedParaEQ name/UUID calls: not supported below v2 (this device has v1)"
+
+[[deny]]
+feature = 0x020D
+function = 8
+reason = "AdvancedParaEQ name/UUID calls: not supported below v2 (this device has v1)"
+
+[[deny]]
+feature = 0x020D
+function = 9
+reason = "AdvancedParaEQ name/UUID calls: not supported below v2 (this device has v1)"
+
+[[deny]]
+feature = 0x0609
+function = 3
+reason = "HeadsetMix: not available below v3 (this device has v2)"
+
+[[deny]]
+feature = 0x0609
+function = 4
+reason = "HeadsetMix: not available below v3 (this device has v2)"
+
+[[deny]]
+feature = 0x020E
+function = 0
+reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+
+[[deny]]
+feature = 0x020E
+function = 1
+reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+
+[[deny]]
+feature = 0x020E
+function = 2
+reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+
+[[deny]]
+feature = 0x020E
+function = 3
+reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+
+[[deny]]
+feature = 0x020E
+function = 4
+reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+
+[[deny]]
+feature = 0x020E
+function = 5
+reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+
+[[deny]]
+feature = 0x0102
+reason = "no G Hub handler; layout unknown"
+
+[[deny]]
+feature = 0x0303
+reason = "no G Hub handler; layout unknown"
+
+[[deny]]
+feature = 0x0805
+reason = "no G Hub handler; layout unknown"
+
+[[deny]]
+feature = 0x0806
+reason = "no G Hub handler; layout unknown"
+
+[[deny]]
+feature = 0x0807
+reason = "no G Hub handler; layout unknown"

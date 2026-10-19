@@ -17,14 +17,15 @@ pub trait Transport {
     fn read(&mut self, timeout_ms: i32) -> Result<Option<[u8; FRAME_LEN]>, DeviceError>;
 }
 
-/// The A50 X control interface through hidapi.
+/// The A50 X control interface through hidapi. Only `Session::open` can
+/// open one, so every write to the real device passes the session's gate.
 pub struct HidTransport {
     device: HidDevice,
     _api: HidApi,
 }
 
 impl HidTransport {
-    pub fn open() -> Result<Self, DeviceError> {
+    pub(crate) fn open() -> Result<Self, DeviceError> {
         let api = HidApi::new().map_err(|e| DeviceError::Io(e.to_string()))?;
         let info = control_interface(api.device_list()).ok_or(DeviceError::NotFound)?;
         let device = info

@@ -2,10 +2,25 @@
 //!
 //! Every request passes one allowlist gate before anything is written, and
 //! unsolicited frames read while waiting for a reply are kept as events.
+//!
+//! [`Session::open`] is the only way to reach the real device: it checks for
+//! G Hub first, and the raw transport cannot be opened from outside.
+//!
+//! ```compile_fail,E0624
+//! let _ = ogh_device::HidTransport::open();
+//! ```
+//!
+//! ```compile_fail,E0624
+//! let _ = ogh_device::Session::<ogh_device::HidTransport>::open_with(
+//!     || Ok(false),
+//!     || unreachable!(),
+//! );
+//! ```
 
 pub mod allowlist;
 mod error;
 pub mod guard;
+mod param_rules;
 mod session;
 #[cfg(feature = "testing")]
 pub mod testing;

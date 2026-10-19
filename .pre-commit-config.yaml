@@ -27,6 +27,12 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-push]
+      - id: cargo-clippy-lib
+        name: cargo clippy (libraries without test features)
+        entry: cargo clippy --workspace --lib -- -D warnings
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
       - id: cargo-test
         name: cargo test
         entry: cargo test --workspace

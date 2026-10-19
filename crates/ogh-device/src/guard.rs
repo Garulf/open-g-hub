@@ -1,5 +1,7 @@
 //! Detects G Hub's agent, which holds the device and must not share it.
 
+use crate::error::DeviceError;
+
 const AGENT_EXE: &str = "lghub_agent.exe";
 
 fn is_ghub_agent(exe_name: &str) -> bool {
@@ -7,14 +9,18 @@ fn is_ghub_agent(exe_name: &str) -> bool {
 }
 
 /// True when a process named `lghub_agent.exe` runs. Always false off
-/// Windows, where G Hub does not exist.
-pub fn ghub_agent_running() -> bool {
-    process_names().iter().any(|name| is_ghub_agent(name))
+/// Windows, where G Hub does not exist. Fails closed: if the process list
+/// cannot be read, that is an error, not "G Hub is not running".
+///
+/// `Session::open` checks this once. A long-running owner of a session must
+/// call it again periodically, since G Hub can start later.
+pub fn ghub_agent_running() -> Result<bool, DeviceError> {
+    Ok(process_names()?.iter().any(|name| is_ghub_agent(name)))
 }
 
 #[cfg(windows)]
-fn process_names() -> Vec<String> {
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+fn process_names() -> Result<Vec<String>, DeviceError> {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
         TH32CS_SNAPPROCESS,
@@ -26,7 +32,11 @@ fn process_names() -> Vec<String> {
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot == INVALID_HANDLE_VALUE {
-            return names;
+            return Err(DeviceError::Io(format!(
+                "cannot list running processes to check for G Hub ({AGENT_EXE}): \
+                 Windows error {}",
+                GetLastError()
+            )));
         }
         let mut entry = PROCESSENTRY32W {
             dwSize: size_of::<PROCESSENTRY32W>() as u32,
@@ -44,12 +54,12 @@ fn process_names() -> Vec<String> {
         }
         CloseHandle(snapshot);
     }
-    names
+    Ok(names)
 }
 
 #[cfg(not(windows))]
-fn process_names() -> Vec<String> {
-    Vec::new()
+fn process_names() -> Result<Vec<String>, DeviceError> {
+    Ok(Vec::new())
 }
 
 #[cfg(test)]

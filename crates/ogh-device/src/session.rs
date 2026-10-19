@@ -14,58 +14,79 @@ use ogh_protocol::{
 use crate::allowlist::Allowlist;
 use crate::error::DeviceError;
 use crate::transport::Transport;
-use crate::{FeatureId, HidTransport, guard};
+use crate::{FeatureId, HidTransport, guard, param_rules};
 
-const REQUEST_TIMEOUT: Duration = Duration::from_millis(1000);
+/// Longer than the slowest reply captured: 2.25 s for getHardwareInfo while
+/// the base station was still booting after a replug.
+const REQUEST_TIMEOUT: Duration = Duration::from_millis(3000);
 const ROOT_INDEX: u8 = 0;
 /// Root and FeatureSet sit at 0 and 1; the paged list starts after them.
 const FIRST_LISTED_INDEX: u8 = 2;
 const SINGLE_FRAME: u8 = 0;
 const EVENT_SW_ID: u8 = 0;
+const NO_WAIT: i32 = 0;
+
+/// Root is never listed by the device, so its flags and version read 0.
+const ROOT: FeatureInfo = FeatureInfo {
+    index: ROOT_INDEX,
+    id: FeatureId::ROOT,
+    flags: 0,
+    version: 0,
+};
 
 /// An open device with its discovered feature table. One request is in
 /// flight at a time; frames that arrive while waiting for a reply and are
 /// not that reply go to the event queue or are dropped.
+///
+/// Replies are matched on feature index, function and G Hub's fixed sw_id,
+/// so they carry no request identity. Input already waiting is drained
+/// before every write, which removes late replies to earlier requests that
+/// arrived in the meantime. A late reply that lands after that drain and
+/// before the real reply is still taken as the answer; only a per-request
+/// sw_id would close that window, and no sw_id other than 0xB has been seen
+/// on this device.
 pub struct Session<T: Transport> {
     transport: T,
     allowlist: &'static Allowlist,
     features: Vec<FeatureInfo>,
     events: VecDeque<Event>,
     headset_available: Option<bool>,
+    request_timeout: Duration,
 }
 
 impl Session<HidTransport> {
-    /// Refuses while G Hub's agent runs, then opens the HID device and runs
-    /// discovery.
+    /// Refuses while G Hub's agent runs, then opens the HID device, runs
+    /// discovery and reads whether the headset is connected.
     pub fn open() -> Result<Self, DeviceError> {
         Self::open_with(guard::ghub_agent_running, HidTransport::open)
     }
 }
 
 impl<T: Transport> Session<T> {
-    /// `guard` is checked before `opener` is called; a true guard means G Hub
-    /// owns the device and nothing is opened.
-    pub fn open_with(
-        guard: fn() -> bool,
+    /// `guard` is checked before `opener` is called; true or an error means
+    /// nothing is opened.
+    pub(crate) fn open_with(
+        guard: fn() -> Result<bool, DeviceError>,
         opener: impl FnOnce() -> Result<T, DeviceError>,
     ) -> Result<Self, DeviceError> {
-        if guard() {
+        if guard()? {
             return Err(DeviceError::GHubRunning);
         }
         let allowlist = Allowlist::embedded().map_err(|e| DeviceError::Io(e.to_string()))?;
         let mut session = Self {
             transport: opener()?,
             allowlist,
-            features: Vec::new(),
+            features: vec![ROOT],
             events: VecDeque::new(),
             headset_available: None,
+            request_timeout: REQUEST_TIMEOUT,
         };
         session.discover()?;
+        session.headset_available()?;
         Ok(session)
     }
 
-    /// The table read at open: FeatureSet and every listed feature. Root is
-    /// always index 0 and is not listed.
+    /// The table read at open, from Root at index 0 upwards.
     pub fn features(&self) -> &[FeatureInfo] {
         &self.features
     }
@@ -107,32 +128,40 @@ impl<T: Transport> Session<T> {
         Ok(available)
     }
 
+    pub fn request_timeout(&self) -> Duration {
+        self.request_timeout
+    }
+
+    /// How long a request waits for its reply, measured as wall time across
+    /// reads.
+    pub fn set_request_timeout(&mut self, timeout: Duration) {
+        self.request_timeout = timeout;
+    }
+
     pub fn take_events(&mut self) -> Vec<Event> {
         self.events.drain(..).collect()
     }
 
     /// The oldest queued event, or the next one to arrive within
-    /// `timeout_ms`. Frames that are not modelled events are dropped.
+    /// `timeout_ms`. Zero or less polls once without blocking. Frames that
+    /// are not modelled events are dropped.
     pub fn next_event(&mut self, timeout_ms: i32) -> Result<Option<Event>, DeviceError> {
         if let Some(event) = self.events.pop_front() {
             return Ok(Some(event));
         }
         let wait = Duration::from_millis(u64::try_from(timeout_ms).unwrap_or(0));
         let deadline = Instant::now() + wait;
-        while let Some(remaining) = remaining_ms(deadline) {
-            let Some(frame) = self.transport.read(remaining)? else {
-                continue;
-            };
-            if let Ok(Decoded::Reply {
-                flags: SINGLE_FRAME,
-                msg,
-            }) = decode(A50X_PREFIX, &frame)
-                && let Some(event) = self.event_from(&msg)
+        loop {
+            let remaining = remaining_ms(deadline);
+            if let Some(frame) = self.transport.read(remaining.unwrap_or(NO_WAIT))?
+                && let Some(event) = self.event_in(&frame)
             {
                 return Ok(Some(event));
             }
+            if remaining.is_none() {
+                return Ok(None);
+            }
         }
-        Ok(None)
     }
 
     fn discover(&mut self) -> Result<(), DeviceError> {
@@ -140,7 +169,7 @@ impl<T: Transport> Session<T> {
         let feature_set = parse_get_feature(FeatureId::FEATURE_SET, &reply)
             .map_err(bad_reply)?
             .ok_or(DeviceError::FeatureMissing(FeatureId::FEATURE_SET))?;
-        self.features.push(feature_set);
+        self.add_feature(feature_set)?;
 
         let reply = self.send(FeatureId::FEATURE_SET, get_count_request(feature_set.index))?;
         let count = parse_count(&reply).map_err(bad_reply)?;
@@ -159,16 +188,26 @@ impl<T: Transport> Session<T> {
             else {
                 return Err(bad_reply(ParseError::IndexOverflow));
             };
-            self.features.extend(page);
+            for info in page {
+                self.add_feature(info)?;
+            }
             start = next;
         }
         Ok(())
     }
 
-    fn index_of(&self, id: FeatureId) -> Result<u8, DeviceError> {
-        if id == FeatureId::ROOT {
-            return Ok(ROOT_INDEX);
+    fn add_feature(&mut self, info: FeatureInfo) -> Result<(), DeviceError> {
+        if self.features.iter().any(|known| known.id == info.id) {
+            let FeatureId(id) = info.id;
+            return Err(DeviceError::Io(format!(
+                "the device lists feature {id:#06x} twice"
+            )));
         }
+        self.features.push(info);
+        Ok(())
+    }
+
+    fn index_of(&self, id: FeatureId) -> Result<u8, DeviceError> {
         self.features
             .iter()
             .find(|f| f.id == id)
@@ -177,35 +216,47 @@ impl<T: Transport> Session<T> {
     }
 
     fn id_at(&self, index: u8) -> Option<FeatureId> {
-        if index == ROOT_INDEX {
-            return Some(FeatureId::ROOT);
-        }
         self.features
             .iter()
             .find(|f| f.index == index)
             .map(|f| f.id)
     }
 
-    /// The single gate every outgoing message passes: the message must target
-    /// the discovered index of `id`, and (`id`, function) must be allowlisted.
+    /// The single gate every outgoing message passes. The message must
+    /// target the discovered index of `id` with G Hub's sw_id, (`id`,
+    /// function) must be allowlisted, and its params must pass any parameter
+    /// rule for that call. Nothing is written otherwise.
     fn send(&mut self, id: FeatureId, msg: Message) -> Result<Vec<u8>, DeviceError> {
-        let refused = DeviceError::NotAllowed {
-            feature: id,
-            function: msg.function,
-        };
-        if self.index_of(id).ok() != Some(msg.feature_index)
-            || !self.allowlist.permits(id, msg.function)
-        {
-            return Err(refused);
+        let allowed = self.index_of(id).ok() == Some(msg.feature_index)
+            && msg.sw_id == GHUB_SW_ID
+            && self.allowlist.permits(id, msg.function)
+            && param_rules::permits(id, msg.function, &msg.params);
+        if !allowed {
+            return Err(DeviceError::NotAllowed {
+                feature: id,
+                function: msg.function,
+            });
         }
         let frame = encode(A50X_PREFIX, SINGLE_FRAME, &msg)
             .map_err(|e| DeviceError::Io(format!("cannot encode request: {e}")))?;
+        self.drain_pending()?;
         self.transport.write(&frame)?;
         self.await_reply(&msg)
     }
 
+    /// Queues events already waiting and discards everything else, so a late
+    /// reply to an earlier request cannot answer the next one.
+    fn drain_pending(&mut self) -> Result<(), DeviceError> {
+        while let Some(frame) = self.transport.read(NO_WAIT)? {
+            if let Some(event) = self.event_in(&frame) {
+                self.events.push_back(event);
+            }
+        }
+        Ok(())
+    }
+
     fn await_reply(&mut self, sent: &Message) -> Result<Vec<u8>, DeviceError> {
-        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        let deadline = Instant::now() + self.request_timeout;
         while let Some(remaining) = remaining_ms(deadline) {
             let Some(frame) = self.transport.read(remaining)? else {
                 continue;
@@ -252,6 +303,16 @@ impl<T: Transport> Session<T> {
         }
     }
 
+    fn event_in(&mut self, frame: &[u8; FRAME_LEN]) -> Option<Event> {
+        match decode(A50X_PREFIX, frame).ok()? {
+            Decoded::Reply {
+                flags: SINGLE_FRAME,
+                msg,
+            } => self.event_from(&msg),
+            _ => None,
+        }
+    }
+
     fn event_from(&mut self, msg: &Message) -> Option<Event> {
         if msg.sw_id != EVENT_SW_ID {
             return None;
@@ -293,4 +354,58 @@ fn remaining_ms(deadline: Instant) -> Option<i32> {
     }
     let ms = left.as_micros().div_ceil(1000);
     Some(i32::try_from(ms).unwrap_or(i32::MAX))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    struct Unopened;
+
+    impl Transport for Unopened {
+        fn write(&mut self, _frame: &[u8; FRAME_LEN]) -> Result<(), DeviceError> {
+            unreachable!("never opened")
+        }
+
+        fn read(&mut self, _timeout_ms: i32) -> Result<Option<[u8; FRAME_LEN]>, DeviceError> {
+            unreachable!("never opened")
+        }
+    }
+
+    fn ghub_running() -> Result<bool, DeviceError> {
+        Ok(true)
+    }
+
+    fn process_list_unreadable() -> Result<bool, DeviceError> {
+        Err(DeviceError::Io("no process list".into()))
+    }
+
+    fn open_counting(
+        guard: fn() -> Result<bool, DeviceError>,
+    ) -> (Result<Session<Unopened>, DeviceError>, bool) {
+        let opened = Cell::new(false);
+        let result = Session::open_with(guard, || {
+            opened.set(true);
+            Ok(Unopened)
+        });
+        (result, opened.get())
+    }
+
+    #[test]
+    fn guard_blocks_open() {
+        let (result, opened) = open_counting(ghub_running);
+
+        assert!(matches!(result, Err(DeviceError::GHubRunning)));
+        assert!(!opened);
+    }
+
+    #[test]
+    fn unreadable_process_list_blocks_open() {
+        let (result, opened) = open_counting(process_list_unreadable);
+
+        assert!(matches!(result, Err(DeviceError::Io(_))));
+        assert!(!opened);
+    }
 }

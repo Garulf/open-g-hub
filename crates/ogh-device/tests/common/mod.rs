@@ -5,7 +5,6 @@ use std::fs;
 use std::path::PathBuf;
 
 use ogh_device::FeatureId;
-use ogh_device::testing::ScriptedTransport;
 use ogh_protocol::discovery::{parse_feature_page, parse_get_feature};
 use ogh_protocol::{A50X_PREFIX, Decoded, FRAME_LEN, Message, decode};
 use serde::Deserialize;
@@ -76,24 +75,8 @@ pub fn frame_from_hex(hex_str: &str) -> [u8; FRAME_LEN] {
 }
 
 pub const LAUNCH: &str = "session-a/ghub-launch";
-const LAUNCH_GET_FEATURE_SET: usize = 5;
-const LAUNCH_GET_COUNT: usize = 7;
-const LAUNCH_LIST_FROM_2: usize = 17;
-const LAUNCH_LIST_FROM_16: usize = 21;
-pub const LAUNCH_DISCOVERY_REQUESTS: [usize; 4] = [4, 6, 16, 20];
-
-/// Queues G Hub's own discovery replies from the launch capture, in the
-/// order `Session::open_with` asks for them.
-pub fn script_discovery(device: &ScriptedTransport) {
-    for line in [
-        LAUNCH_GET_FEATURE_SET,
-        LAUNCH_GET_COUNT,
-        LAUNCH_LIST_FROM_2,
-        LAUNCH_LIST_FROM_16,
-    ] {
-        device.push_frame(frame_at(LAUNCH, line));
-    }
-}
+pub const LAUNCH_OPEN_REQUESTS: [usize; 5] = [4, 6, 16, 20, 132];
+pub const LAUNCH_OPEN_REPLIES: [usize; 5] = [5, 7, 17, 21, 133];
 
 fn reply(frame: &[u8; FRAME_LEN]) -> Option<Message> {
     match decode(A50X_PREFIX, frame) {
