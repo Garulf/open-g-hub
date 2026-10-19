@@ -1,3 +1,5 @@
 # Capture fixtures
 
 Each `.jsonl` file is one USB capture of the A50 X HID control interface, converted by `ogh-capture`. The first line is a metadata object: `label` names the capture, `notes` says what was done during the window, and `scrubbed` lists every byte that was replaced with `00` before committing. In a `scrubbed` entry, `line` is the 1-based line number in the fixture file (the metadata line is line 1, so the first transfer is line 2), `offsets` are 0-based byte positions in the 64-byte frame (position 0 is the report id), and `what` says what was removed. Length bytes in front of scrubbed strings are left as they were. Every other line is a transfer exactly as `ogh-capture` wrote it: `t_ms` since the start of the capture window, `dir` (`out` is host to device), and `hex`, the full frame.
+
+Session B fixtures (`fixtures/session-b/`) are controlled captures of one setting. Their metadata line also has `setting` and `values`: the values the user set in G Hub, in order, with the wire value each one produced.
