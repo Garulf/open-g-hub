@@ -1,0 +1,404 @@
+# Calls open-g-hub may send: each (feature id, function) G Hub was seen
+# sending, citing the fixture that shows it. Deny entries win and cannot
+# overlap an allow entry; a deny entry without a function covers the feature.
+
+# Root getFeature
+[[allow]]
+feature = 0x0000
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# Root ping
+[[allow]]
+feature = 0x0000
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# FeatureSet getCount
+[[allow]]
+feature = 0x0001
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# FeatureSet paged list
+[[allow]]
+feature = 0x0001
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# DeviceInfo getHardwareInfo
+[[allow]]
+feature = 0x0100
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# DeviceInfo getFirmwareVersion
+[[allow]]
+feature = 0x0100
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# DeviceName getName
+[[allow]]
+feature = 0x0101
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# DeviceName getDefaultName
+[[allow]]
+feature = 0x0101
+function = 2
+seen_in = "session-a/ghub-launch"
+
+# DeviceName getMaxLength
+[[allow]]
+feature = 0x0101
+function = 3
+seen_in = "session-a/ghub-launch"
+
+# BatterySOC status
+[[allow]]
+feature = 0x0104
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# AutoSleep read
+[[allow]]
+feature = 0x0108
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# iVolumeSet read
+[[allow]]
+feature = 0x0200
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# iVolumeSet read
+[[allow]]
+feature = 0x0200
+function = 3
+seen_in = "session-a/ghub-launch"
+
+# Sidetone get level
+[[allow]]
+feature = 0x0604
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# Sidetone set level
+[[allow]]
+feature = 0x0604
+function = 1
+seen_in = "session-b/sidetone"
+
+# Sidetone get info
+[[allow]]
+feature = 0x0604
+function = 2
+seen_in = "session-a/ghub-launch"
+
+# HeadsetMix get balance
+[[allow]]
+feature = 0x0609
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# HeadsetMix set balance
+[[allow]]
+feature = 0x0609
+function = 1
+seen_in = "session-b/balance"
+
+# HeadsetMix get info
+[[allow]]
+feature = 0x0609
+function = 2
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 2
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 3
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 4
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 5
+seen_in = "session-a/ghub-launch"
+
+# AdvancedParaEQ get infos
+[[allow]]
+feature = 0x020D
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# AdvancedParaEQ get custom EQ
+[[allow]]
+feature = 0x020D
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# AdvancedParaEQ set custom EQ
+[[allow]]
+feature = 0x020D
+function = 2
+seen_in = "session-a/ghub-launch"
+
+# AdvancedParaEQ get active EQ
+[[allow]]
+feature = 0x020D
+function = 3
+seen_in = "session-a/ghub-launch"
+
+# AdvancedParaEQ get preset
+[[allow]]
+feature = 0x020D
+function = 5
+seen_in = "session-a/ghub-launch"
+
+# BtHostInfo connected device count
+[[allow]]
+feature = 0x0305
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# LED brightness read
+[[allow]]
+feature = 0x0110
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# HeadsetTones read
+[[allow]]
+feature = 0x060B
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# MicTest getState
+[[allow]]
+feature = 0x020E
+function = 6
+seen_in = "session-a/ghub-launch"
+
+# MixerMic get info
+[[allow]]
+feature = 0x0801
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# MixerMic get noise gate
+[[allow]]
+feature = 0x0801
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# MixerMic get noise gate options
+[[allow]]
+feature = 0x0801
+function = 3
+seen_in = "session-a/ghub-launch"
+
+# AutoSleep set sleep timer
+[[allow]]
+feature = 0x0108
+function = 1
+seen_in = "session-b/small-settings"
+
+# iVolumeSet set volume level
+[[allow]]
+feature = 0x0200
+function = 1
+seen_in = "session-b/small-settings"
+
+# LED brightness set
+[[allow]]
+feature = 0x0110
+function = 1
+seen_in = "session-b/small-settings"
+
+# HeadsetTones set tone state
+[[allow]]
+feature = 0x060B
+function = 1
+seen_in = "session-b/small-settings"
+
+# iMixerAudio set mixer settings
+[[allow]]
+feature = 0x0800
+function = 6
+seen_in = "session-b/mixer"
+
+# MixerMic set noise gate
+[[allow]]
+feature = 0x0801
+function = 2
+seen_in = "session-b/eq-mic"
+
+[[deny]]
+feature = 0x010A
+reason = "GenericDFU: firmware update path, never touched even for reads"
+
+[[deny]]
+feature = 0x0103
+reason = "Memfault: drains diagnostic data held for Logitech"
+
+[[deny]]
+feature = 0x0305
+function = 1
+reason = "BtHostInfo connected device address: personal data (paired phone)"
+
+[[deny]]
+feature = 0x0305
+function = 2
+reason = "BtHostInfo connected device name: personal data (paired phone)"
+
+[[deny]]
+feature = 0x0100
+function = 2
+reason = "DeviceInfo serial number: personal data"
+
+[[deny]]
+feature = 0x0100
+function = 4
+reason = "DeviceInfo factory reset: wipes the device"
+
+[[deny]]
+feature = 0x0101
+function = 1
+reason = "DeviceName setName: persistent rename"
+
+[[deny]]
+feature = 0x0004
+function = 2
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x0004
+function = 3
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x0004
+function = 5
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x0004
+function = 6
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x0004
+function = 8
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x0004
+function = 9
+reason = "iProfile: persistent profile writes, profile reset, onboard-switch preemption"
+
+[[deny]]
+feature = 0x020D
+function = 6
+reason = "AdvancedParaEQ name/UUID calls: not supported below v2 (this device has v1)"
+
+[[deny]]
+feature = 0x020D
+function = 7
+reason = "AdvancedParaEQ name/UUID calls: not supported below v2 (this device has v1)"
+
+[[deny]]
+feature = 0x020D
+function = 8
+reason = "AdvancedParaEQ name/UUID calls: not supported below v2 (this device has v1)"
+
+[[deny]]
+feature = 0x020D
+function = 9
+reason = "AdvancedParaEQ name/UUID calls: not supported below v2 (this device has v1)"
+
+[[deny]]
+feature = 0x0609
+function = 3
+reason = "HeadsetMix: not available below v3 (this device has v2)"
+
+[[deny]]
+feature = 0x0609
+function = 4
+reason = "HeadsetMix: not available below v3 (this device has v2)"
+
+[[deny]]
+feature = 0x020E
+function = 0
+reason = "MicTest control: observed in session-b/mic-test, held back until the mic test UI exists"
+
+[[deny]]
+feature = 0x020E
+function = 1
+reason = "MicTest control: observed in session-b/mic-test, held back until the mic test UI exists"
+
+[[deny]]
+feature = 0x020E
+function = 2
+reason = "MicTest control: observed in session-b/mic-test, held back until the mic test UI exists"
+
+[[deny]]
+feature = 0x020E
+function = 3
+reason = "MicTest control: not sent in session-b/mic-test (playback ran to its end), held back until the mic test UI exists"
+
+[[deny]]
+feature = 0x020E
+function = 4
+reason = "MicTest control: observed in session-b/mic-test, held back until the mic test UI exists"
+
+[[deny]]
+feature = 0x020E
+function = 5
+reason = "MicTest control: observed in session-b/mic-test, held back until the mic test UI exists"
+
+[[deny]]
+feature = 0x0102
+reason = "no G Hub handler; layout unknown"
+
+[[deny]]
+feature = 0x0303
+reason = "no G Hub handler; layout unknown"
+
+[[deny]]
+feature = 0x0805
+reason = "no G Hub handler; layout unknown"
+
+[[deny]]
+feature = 0x0806
+reason = "no G Hub handler; layout unknown"
+
+[[deny]]
+feature = 0x0807
+reason = "no G Hub handler; layout unknown"
