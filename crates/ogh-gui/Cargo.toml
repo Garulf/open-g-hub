@@ -12,6 +12,10 @@ path = "src/lib.rs"
 name = "ogh-gui"
 path = "src/bin/ogh-gui.rs"
 
+[[bin]]
+name = "ogh-tray"
+path = "src/bin/ogh-tray.rs"
+
 [dependencies]
 crossbeam-channel = "0.5"
 eframe = { version = "0.37", default-features = false, features = [
@@ -30,6 +34,7 @@ png = "0.18"
 # eframe enables winit's defaults (runtime-loaded Wayland, client-side decorations) only
 # through its wgpu default; this keeps them with the glow renderer.
 [target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 winit = "0.30"
 
 [dev-dependencies]
