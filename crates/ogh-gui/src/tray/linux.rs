@@ -189,17 +189,11 @@ fn serve(
 ) -> Result<(), String> {
     loop {
         match received.recv() {
-            Ok(TrayAction::Request(request)) => {
-                if let Some(link) = link {
-                    link.send(request);
+            Ok(action) => {
+                if super::perform(action, link, launcher, &report).is_break() {
+                    return Ok(());
                 }
             }
-            Ok(TrayAction::OpenWindow) => {
-                if let Err(error) = launcher.open() {
-                    report(error);
-                }
-            }
-            Ok(TrayAction::Quit) => return Ok(()),
             Err(_) => return Err("the tray service stopped".to_string()),
         }
     }
