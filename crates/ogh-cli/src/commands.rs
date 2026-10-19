@@ -335,7 +335,7 @@ pub enum Command {
         #[command(subcommand)]
         command: ProfileCommand,
     },
-    /// Turn automatic profile switching on or off
+    /// Turn default audio device switching (on undock and dock) on or off
     Autoswitch { state: Toggle },
     /// Start ogh-daemon at logon (Windows)
     Autostart {

@@ -3,7 +3,7 @@ use std::ptr;
 
 use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR};
 use windows_sys::Win32::System::Registry::{
-    HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+    HKEY_CURRENT_USER, REG_SZ, RRF_RT_ANY, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
 };
 
 use crate::error::CliError;
@@ -58,7 +58,7 @@ pub fn remove() -> Result<(), CliError> {
     }
 }
 
-/// Whether the Run value exists as a string.
+/// Whether the Run value exists, whatever its type.
 pub fn is_set() -> Result<bool, CliError> {
     let key = wide(RUN_KEY);
     let name = wide(VALUE_NAME);
@@ -69,7 +69,7 @@ pub fn is_set() -> Result<bool, CliError> {
             HKEY_CURRENT_USER,
             key.as_ptr(),
             name.as_ptr(),
-            RRF_RT_REG_SZ,
+            RRF_RT_ANY,
             ptr::null_mut(),
             ptr::null_mut(),
             ptr::null_mut(),

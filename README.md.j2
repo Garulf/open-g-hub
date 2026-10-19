@@ -62,7 +62,7 @@ This installs the package and the user service. It cannot install a udev rule, s
 
 ### Other Linux
 
-Build with `cargo build --release -p ogh-cli -p ogh-daemon` and put `ogh` and `ogh-daemon` on your `PATH`. Then let your user open the base station:
+Build with `cargo build --release -p ogh-cli -p ogh-daemon` and install `ogh` and `ogh-daemon` to `/usr/local/bin`. Then let your user open the base station:
 
 ```sh
 sudo cp packaging/linux/70-open-g-hub.rules /etc/udev/rules.d/
@@ -77,7 +77,7 @@ cp packaging/linux/ogh-daemon.service ~/.config/systemd/user/
 systemctl --user enable --now ogh-daemon
 ```
 
-The unit runs `ogh-daemon` from the systemd search path, so edit `ExecStart=` to the full path if you installed it elsewhere.
+The unit runs `ogh-daemon` from systemd's search path, not your shell `PATH`, so keep it in `/usr/local/bin` or edit `ExecStart=` to the full path if you installed it elsewhere.
 {% endblock %}
 
 {% block usage %}

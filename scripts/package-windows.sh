@@ -15,9 +15,9 @@ cargo build --release --locked --target "$target" -p ogh-cli -p ogh-daemon
 
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
-cp "$release_dir/ogh.exe" "$release_dir/ogh-daemon.exe" README.md "$stage/"
+cp "$release_dir/ogh.exe" "$release_dir/ogh-daemon.exe" packaging/windows/README.txt "$stage/"
 
 mkdir -p dist
 rm -f "$zip_path"
-zip -j -q "$zip_path" "$stage/ogh.exe" "$stage/ogh-daemon.exe" "$stage/README.md"
+zip -j -q "$zip_path" "$stage/ogh.exe" "$stage/ogh-daemon.exe" "$stage/README.txt"
 echo "$zip_path"
