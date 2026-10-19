@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use ogh_cli::commands::{Cli, RunOptions, run};
@@ -30,6 +30,8 @@ const FIRMWARE_REPLY: usize = 13;
 
 const MIC_TEST_IN_USE: &str = "020c0400136b00";
 const BATTERY_DISCHARGING: &str = "020c0600060b646400";
+const BATTERY_CHARGING: &str = "020c0600060b646401";
+const NOT_CONNECTED_ERROR: &str = "020c0600ff060b08";
 const SIDETONE_LEVEL_FOUR: &str = "020c0700090b0101ff04";
 const NOISE_GATE_TOURNAMENT: &str = "020c0400161b04";
 
@@ -251,17 +253,89 @@ fn status_human_output_is_an_aligned_list() {
 }
 
 #[test]
-fn status_does_not_hide_a_failure_while_the_headset_is_in_use() {
+fn status_does_not_hide_a_timeout_while_the_headset_is_in_use() {
     let (mut session, device) = open();
-    device.push_frame(frame_from_hex(MIC_TEST_IN_USE));
-    device.push_timeout();
+    let replies = StatusReplies {
+        battery: None,
+        ..StatusReplies::in_use()
+    };
+    replies.script(&device);
 
-    let (result, _) = execute(&mut session, &["status"], &RunOptions::default());
+    let (result, out) = execute(&mut session, &["status"], &RunOptions::default());
 
     assert!(matches!(
         result,
         Err(CliError::Device(DeviceError::Timeout))
     ));
+    assert_eq!(out, "");
+    assert_eq!(session.request_timeout(), SHORT_TIMEOUT);
+}
+
+#[test]
+fn headset_leaving_during_status_reads_as_disconnected() {
+    let (mut session, device) = open();
+    device.push_frame(frame_from_hex(MIC_TEST_IN_USE));
+    device.push_frame(frame_from_hex(NOT_CONNECTED_ERROR));
+    device.push_frame(frame_from_hex(SIDETONE_LEVEL_FOUR));
+    device.push_frame(fixture_frame(LAUNCH, BALANCE_REPLY));
+    device.push_frame(fixture_frame(LAUNCH, NOISE_GATE_OFF_REPLY));
+    device.push_frame(fixture_frame(LAUNCH, FIRMWARE_REPLY));
+
+    let (result, out) = execute(&mut session, &["status", "--json"], &RunOptions::default());
+
+    result.expect("status succeeds");
+    let status: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(status["headset"], "disconnected");
+    assert_eq!(status["headset_connected"], false);
+    assert_eq!(status["battery_percent"], Value::Null);
+}
+
+#[test]
+fn a_dock_battery_status_reads_as_charging_and_docked() {
+    let replies = StatusReplies {
+        battery: Some(frame_from_hex(BATTERY_CHARGING)),
+        ..StatusReplies::docked()
+    };
+
+    let status = status_json(&replies);
+
+    assert_eq!(status["headset"], "docked");
+    assert_eq!(status["charging"], true);
+    assert_eq!(status["docked"], true);
+    assert_eq!(status["battery_percent"], 100);
+    assert_eq!(
+        human_value(&status_human(&replies), "battery"),
+        "100% charging"
+    );
+}
+
+#[test]
+fn a_discharging_battery_while_not_in_use_is_not_docked() {
+    let status = status_json(&StatusReplies {
+        battery: Some(frame_from_hex(BATTERY_DISCHARGING)),
+        ..StatusReplies::docked()
+    });
+
+    assert_eq!(status["headset"], "disconnected");
+    assert_eq!(status["docked"], false);
+    assert_eq!(status["charging"], false);
+    assert_eq!(status["headset_connected"], false);
+}
+
+#[test]
+fn a_silent_headset_does_not_cost_the_full_timeout_per_read() {
+    let (mut session, device) = open();
+    session.set_request_timeout(Duration::from_secs(5));
+    StatusReplies::headset_off().script(&device);
+
+    let started = Instant::now();
+    let (result, _) = execute(&mut session, &["status"], &RunOptions::default());
+    let elapsed = started.elapsed();
+
+    result.expect("status succeeds");
+    assert!(elapsed >= Duration::from_millis(900), "{elapsed:?}");
+    assert!(elapsed < Duration::from_millis(2500), "{elapsed:?}");
+    assert_eq!(session.request_timeout(), Duration::from_secs(5));
 }
 
 #[test]
@@ -319,8 +393,8 @@ fn unplugged_base_station_exits_5_with_a_message() {
 }
 
 #[test]
-fn failing_to_open_the_device_explains_permissions_on_linux() {
-    let error = CliError::Opening(DeviceError::Io("cannot open the base station".into()));
+fn permission_denied_when_opening_explains_udev_on_linux() {
+    let error = CliError::Opening(DeviceError::AccessDenied("Permission denied".into()));
 
     assert_eq!(error.exit_code(), 5);
     if cfg!(target_os = "linux") {
@@ -329,6 +403,16 @@ fn failing_to_open_the_device_explains_permissions_on_linux() {
         assert!(message.contains("hidraw"), "{message}");
     }
     assert!(!error.to_string().contains('\n'));
+}
+
+#[test]
+fn other_open_failures_get_no_permission_hint() {
+    let error = CliError::Opening(DeviceError::Io("unexpected reply: too short".into()));
+
+    assert_eq!(error.exit_code(), 5);
+    let message = error.to_string();
+    assert!(!message.contains("udev"), "{message}");
+    assert!(!message.contains("hidraw"), "{message}");
 }
 
 #[test]

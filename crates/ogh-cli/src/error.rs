@@ -35,7 +35,7 @@ impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Device(error) => write!(f, "{error}"),
-            Self::Opening(error @ DeviceError::Io(_)) => {
+            Self::Opening(error @ DeviceError::AccessDenied(_)) => {
                 write!(f, "{error}")?;
                 if cfg!(target_os = "linux") {
                     write!(

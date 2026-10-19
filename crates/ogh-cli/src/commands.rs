@@ -3,6 +3,7 @@ use std::num::ParseIntError;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use ogh_device::{DeviceError, FeatureId, Session, Transport};
@@ -17,6 +18,7 @@ use crate::error::CliError;
 use crate::output::{self, Status};
 
 const POLL_MS: i32 = 500;
+const AWAY_READ_TIMEOUT: Duration = Duration::from_millis(1000);
 const MAX_PERCENT: u8 = 100;
 const MAIN_FIRMWARE_ENTITY: u8 = 0;
 
@@ -108,11 +110,11 @@ fn status<T: Transport>(
 }
 
 fn read_status<T: Transport>(session: &mut Session<T>) -> Result<Status, DeviceError> {
-    let in_use = session.headset_available()?;
-    let battery = unless_headset_is_away(in_use, read_battery(session))?;
-    let sidetone = unless_headset_is_away(in_use, read_sidetone(session))?;
-    let balance = unless_headset_is_away(in_use, read_balance(session))?;
-    let noise_gate = unless_headset_is_away(in_use, read_noise_gate(session))?;
+    let mut in_use = session.headset_available()?;
+    let battery = headset_side(session, &mut in_use, read_battery)?;
+    let sidetone = headset_side(session, &mut in_use, read_sidetone)?;
+    let balance = headset_side(session, &mut in_use, read_balance)?;
+    let noise_gate = headset_side(session, &mut in_use, read_noise_gate)?;
     let firmware = read_firmware(session)?;
     Ok(Status {
         in_use,
@@ -124,15 +126,29 @@ fn read_status<T: Transport>(session: &mut Session<T>) -> Result<Status, DeviceE
     })
 }
 
-/// A read that gets no answer while the headset is off, out of range or
-/// docked means "no value", not a failure of the command.
-fn unless_headset_is_away<V>(
-    in_use: bool,
-    read: Result<V, DeviceError>,
+/// A read that gets no answer means "no value", not a failure of the
+/// command, when the headset is not in use. The device saying the headset is
+/// not connected always does, and ends `in_use`: the headset just went away.
+/// A silent headset is given `AWAY_READ_TIMEOUT` instead of the full request
+/// timeout.
+fn headset_side<T: Transport, V>(
+    session: &mut Session<T>,
+    in_use: &mut bool,
+    read: impl FnOnce(&mut Session<T>) -> Result<V, DeviceError>,
 ) -> Result<Option<V>, DeviceError> {
-    match read {
+    let full_timeout = session.request_timeout();
+    if !*in_use {
+        session.set_request_timeout(full_timeout.min(AWAY_READ_TIMEOUT));
+    }
+    let result = read(session);
+    session.set_request_timeout(full_timeout);
+    match result {
         Ok(value) => Ok(Some(value)),
-        Err(DeviceError::Timeout | DeviceError::HeadsetDisconnected) if !in_use => Ok(None),
+        Err(DeviceError::HeadsetDisconnected) => {
+            *in_use = false;
+            Ok(None)
+        }
+        Err(DeviceError::Timeout) if !*in_use => Ok(None),
         Err(error) => Err(error),
     }
 }
