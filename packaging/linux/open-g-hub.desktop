@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=open-g-hub
+Comment=Settings for the Astro A50 X headset
+Exec=ogh-gui
+Icon=open-g-hub
+Terminal=false
+Categories=AudioVideo;Settings;HardwareSettings;

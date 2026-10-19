@@ -1,0 +1,12 @@
+[Unit]
+Description=open-g-hub tray
+After=graphical-session.target ogh-daemon.service
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=ogh-tray
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

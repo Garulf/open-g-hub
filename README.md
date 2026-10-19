@@ -13,17 +13,17 @@ open-g-hub only sends commands that were observed from G Hub and refuses everyth
 
 ## Install
 
-Two programs ship together: `ogh-daemon` talks to the headset and keeps its state, and `ogh` is the command line that talks to the daemon.
+Four programs ship together: `ogh-daemon` talks to the headset and keeps its state, `ogh` is the command line that talks to the daemon, `ogh-gui` is the settings window and `ogh-tray` is the tray icon. The last two are described under [Window and tray](#window-and-tray).
 
 ### Windows
 
-Unzip the release, put `ogh.exe` and `ogh-daemon.exe` in one folder, and run:
+Unzip the release into one folder (`ogh.exe`, `ogh-daemon.exe`, `ogh-gui.exe` and `ogh-tray.exe` have to stay together) and run:
 
 ```sh
 ogh autostart on
 ```
 
-That starts `ogh-daemon.exe` at every logon. `ogh autostart off` removes it and `ogh autostart status` prints `on` or `off`. To run the daemon once without autostart, start `ogh-daemon.exe` yourself.
+That starts `ogh-daemon.exe` and `ogh-tray.exe` at every logon. If `ogh-tray.exe` is not next to `ogh.exe`, only the daemon is registered and the command says so. `ogh autostart off` removes both, and `ogh autostart status` prints `on` or `off` for each. To run the daemon once without autostart, start `ogh-daemon.exe` yourself.
 
 ### NixOS
 
@@ -44,7 +44,7 @@ Add the flake as an input and import its module:
 }
 ```
 
-This installs `ogh`, adds the udev rule that gives your user access to the base station, and runs `ogh-daemon` as a user service.
+This installs `ogh`, `ogh-gui` and `ogh-tray`, adds the udev rule that gives your user access to the base station, and runs `ogh-daemon` and `ogh-tray` as user services. The window gets a launcher entry and an icon. To skip the tray service, set `programs.open-g-hub.tray.enable = false;`.
 
 ### Home Manager
 
@@ -55,11 +55,11 @@ This installs `ogh`, adds the udev rule that gives your user access to the base 
 }
 ```
 
-This installs the package and the user service. It cannot install a udev rule, so on NixOS enable the NixOS module as well, or add the package to `services.udev.packages`.
+This installs the package and the user services. `services.open-g-hub.tray.enable = false;` leaves the tray out. It cannot install a udev rule, so on NixOS enable the NixOS module as well, or add the package to `services.udev.packages`.
 
 ### Other Linux
 
-Build with `cargo build --release -p ogh-cli -p ogh-daemon` and install `ogh` and `ogh-daemon` to `/usr/local/bin`. Then let your user open the base station:
+Build with `cargo build --release -p ogh-cli -p ogh-daemon -p ogh-gui` and install `ogh`, `ogh-daemon`, `ogh-gui` and `ogh-tray` to `/usr/local/bin`. Then let your user open the base station:
 
 ```sh
 sudo cp packaging/linux/70-open-g-hub.rules /etc/udev/rules.d/
@@ -70,11 +70,11 @@ Install the user unit and start it:
 
 ```sh
 mkdir -p ~/.config/systemd/user
-cp packaging/linux/ogh-daemon.service ~/.config/systemd/user/
-systemctl --user enable --now ogh-daemon
+cp packaging/linux/ogh-daemon.service packaging/linux/ogh-tray.service ~/.config/systemd/user/
+systemctl --user enable --now ogh-daemon ogh-tray
 ```
 
-The unit runs `ogh-daemon` from systemd's search path, not your shell `PATH`, so keep it in `/usr/local/bin` or edit `ExecStart=` to the full path if you installed it elsewhere.
+The units run `ogh-daemon` and `ogh-tray` from systemd's search path, not your shell `PATH`, so keep them in `/usr/local/bin` or edit `ExecStart=` to the full path if you installed them elsewhere. For a launcher entry for the window, copy `packaging/linux/open-g-hub.desktop` to `~/.local/share/applications/` and `assets/icon.svg` to `~/.local/share/icons/hicolor/scalable/apps/open-g-hub.svg`.
 
 ## Usage
 
@@ -131,6 +131,25 @@ bind = SUPER, F9, exec, ogh profile apply fps
 ```
 
 Exit codes: 2 for a bad argument, 3 when the base station is not found, 4 when G Hub is running, 5 for any other failure, 6 when the daemon is not running.
+
+## Window and tray
+
+`ogh-gui` is a settings window with pages for the device, the mixer, the EQ and profiles. `ogh-tray` sits in the system tray and shows the headset state in its tooltip. Both talk to the daemon, so neither does anything useful until `ogh-daemon` is running. With the daemon down, the tray headline and the window both say so.
+
+The tray menu has:
+
+- a headline with the headset state and battery (or why there is none, such as G Hub running), and the last error if there is one
+- Profile: pick a saved profile
+- Sidetone: 0, 25, 50, 75 or 100 percent
+- Balance: 0 to 12 in steps of two, with 6 as the centre
+- Stream level: 0 to 100 percent for the stream output
+- Switch audio on dock: the same toggle as `ogh autoswitch`
+- Open open-g-hub: starts `ogh-gui` from the folder `ogh-tray` runs from
+- Quit tray
+
+On Windows, run `ogh-gui.exe` or `ogh-tray.exe` from the unzipped folder, or run `ogh autostart on` to have the tray start at logon. On NixOS, the NixOS and Home Manager modules start the tray as a user service and install a launcher entry for the window. Start the window from your launcher or by running `ogh-gui`.
+
+Quitting the tray does not stop the daemon.
 
 ## Configuration
 

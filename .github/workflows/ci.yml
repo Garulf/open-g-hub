@@ -44,4 +44,6 @@ jobs:
           path: |
             target/x86_64-pc-windows-gnu/release/ogh.exe
             target/x86_64-pc-windows-gnu/release/ogh-daemon.exe
+            target/x86_64-pc-windows-gnu/release/ogh-gui.exe
+            target/x86_64-pc-windows-gnu/release/ogh-tray.exe
           if-no-files-found: error

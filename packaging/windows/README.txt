@@ -1,11 +1,21 @@
 open-g-hub for the Astro A50 X
 
-ogh-daemon.exe talks to the base station and keeps its state. ogh.exe is the
-command line that talks to the daemon. Keep both files in the same folder.
+Four programs, all in this folder. Keep them together.
 
-To start the daemon at every logon, run this in a terminal in that folder:
+  ogh-daemon.exe  talks to the base station and keeps its state
+  ogh.exe         the command line that talks to the daemon
+  ogh-gui.exe     the settings window
+  ogh-tray.exe    a tray icon with the common settings; "Open open-g-hub" in its
+                  menu starts the window
+
+The window and the tray talk to the daemon, so the daemon has to be running.
+
+To start the daemon and the tray at every logon, run this in a terminal in that
+folder:
 
     ogh autostart on
+
+"ogh autostart off" removes both and "ogh autostart status" shows each one.
 
 Then check the headset with:
 
