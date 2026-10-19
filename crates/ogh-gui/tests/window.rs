@@ -281,3 +281,104 @@ fn icons_decode_at_their_sizes() {
         assert_eq!(rgba.len(), (side * side * 4) as usize);
     }
 }
+
+#[test]
+fn hold_released_while_daemon_down_is_forgotten() {
+    let mut harness = harness(connected());
+    harness.run();
+
+    let rect = harness
+        .get_by_role_and_label(Role::Slider, "Sidetone")
+        .rect();
+    let grip = Pos2::new(rect.left() + rect.width() * 0.8, rect.center().y);
+    harness.hover_at(grip);
+    harness.drag_at(grip);
+    harness.run();
+    let held = sidetone_value(&harness).expect("a slider value");
+
+    harness
+        .state_mut()
+        .gui
+        .shared
+        .apply(LinkEvent::DaemonDown("connection refused".to_string()));
+    harness.run();
+    harness.drop_at(grip);
+    harness.run();
+
+    let mut quieter = status(Connection::Connected);
+    quieter.settings.profile.sidetone_percent = Some(10);
+    harness
+        .state_mut()
+        .gui
+        .shared
+        .apply(LinkEvent::Status(Box::new(quieter)));
+    harness.run_steps(1);
+    assert_eq!(sidetone_value(&harness), Some(10.0));
+    assert_eq!(
+        harness.state().sent,
+        vec![set(Setting::Sidetone {
+            percent: held as u8
+        })]
+    );
+}
+
+#[test]
+fn unknown_values_are_disabled_and_marked() {
+    let mut unread = status(Connection::Connected);
+    unread.settings.profile.sidetone_percent = None;
+    unread.settings.profile.stream_mix = None;
+    let mut harness = harness(gui_with(unread));
+    harness.run();
+
+    let slider = harness.get_by_role_and_label(Role::Slider, "Sidetone");
+    assert!(slider.accesskit_node().is_disabled());
+    assert!(
+        !harness
+            .get_all_by_label("not read yet")
+            .collect::<Vec<_>>()
+            .is_empty()
+    );
+    slider.click();
+    harness.run();
+    for mute in harness.get_all_by_role_and_label(Role::CheckBox, "Mute") {
+        assert!(mute.accesskit_node().is_disabled());
+        mute.click();
+    }
+    harness.run();
+
+    assert!(harness.state().sent.is_empty());
+}
+
+#[test]
+fn sleep_after_combo_is_inert_when_not_connected() {
+    let mut harness = harness(on_page(
+        gui_with(status(Connection::GhubRunning)),
+        Page::Device,
+    ));
+    harness.run();
+
+    harness
+        .get_by_role_and_label(Role::ComboBox, "Sleep After")
+        .click();
+    harness.run();
+    if let Some(option) = harness.query_by_label("15 min") {
+        option.click();
+        harness.run();
+    }
+
+    assert!(harness.state().sent.is_empty());
+}
+
+#[test]
+fn long_request_failure_stays_dismissable() {
+    let mut gui = connected();
+    gui.shared
+        .apply(LinkEvent::RequestFailed("headset is off ".repeat(40)));
+    let mut harness = harness(gui);
+    harness.run();
+
+    harness.get_by_role_and_label(Role::Button, "x").click();
+    harness.run();
+
+    assert_eq!(harness.state().gui.shared.last_error, None);
+}

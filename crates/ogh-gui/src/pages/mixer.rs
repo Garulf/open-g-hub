@@ -43,72 +43,89 @@ pub(crate) fn show(ui: &mut Ui, state: &mut GuiState, requests: &mut Vec<Request
 
     ui.add_space(8.0);
     ui.strong("Stream mix");
-    match profile.stream_mix {
-        Some(mix) => stream_mix(ui, state, mix, enabled, requests),
-        None => unknown_stream_mix(ui, state),
-    }
+    stream_mix(ui, state, profile.stream_mix, enabled, requests);
 }
 
-const CHANNELS: [(LevelControl, &str); 3] = [
-    (LevelControl::StreamOutput, "Output"),
-    (LevelControl::StreamGame, "Game"),
-    (LevelControl::StreamVoice, "Voice"),
-];
+#[derive(Debug, Clone, Copy)]
+enum Stream {
+    Output,
+    Game,
+    Voice,
+}
+
+impl Stream {
+    const ALL: [Stream; 3] = [Stream::Output, Stream::Game, Stream::Voice];
+
+    fn control(self) -> LevelControl {
+        match self {
+            Stream::Output => LevelControl::StreamOutput,
+            Stream::Game => LevelControl::StreamGame,
+            Stream::Voice => LevelControl::StreamVoice,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Stream::Output => "Output",
+            Stream::Game => "Game",
+            Stream::Voice => "Voice",
+        }
+    }
+
+    fn channel(self, mix: &mut StreamMixSetting) -> &mut Channel {
+        match self {
+            Stream::Output => &mut mix.output,
+            Stream::Game => &mut mix.game,
+            Stream::Voice => &mut mix.voice,
+        }
+    }
+}
 
 fn stream_mix(
     ui: &mut Ui,
     state: &mut GuiState,
-    mix: StreamMixSetting,
+    mix: Option<StreamMixSetting>,
     enabled: bool,
     requests: &mut Vec<Request>,
 ) {
     let mut changed = mix;
-    for (control, label) in CHANNELS {
-        let channel = channel_mut(&mut changed, control);
-        ui.horizontal(|ui| {
-            let level = state.held.slider(
-                ui,
-                Level {
-                    control,
-                    label,
-                    scale: Scale::Percent,
-                    current: Some(channel.level_percent),
-                    enabled,
-                },
-            );
-            if let Some(percent) = level {
-                channel.level_percent = percent;
-            }
-            ui.add_enabled(enabled, Checkbox::new(&mut channel.muted, "Mute"));
-        });
+    for stream in Stream::ALL {
+        let channel = changed.as_mut().map(|mix| stream.channel(mix));
+        stream_row(ui, state, stream, channel, enabled);
     }
-    if changed != mix {
+    if let Some(changed) = changed.filter(|changed| Some(*changed) != mix) {
         requests.push(set(Setting::StreamMix(changed)));
     }
 }
 
-fn unknown_stream_mix(ui: &mut Ui, state: &mut GuiState) {
-    for (control, label) in CHANNELS {
-        ui.horizontal(|ui| {
-            state.held.slider(
-                ui,
-                Level {
-                    control,
-                    label,
-                    scale: Scale::Percent,
-                    current: None,
-                    enabled: false,
-                },
-            );
-            ui.add_enabled(false, Checkbox::new(&mut false, "Mute"));
-        });
-    }
-}
-
-fn channel_mut(mix: &mut StreamMixSetting, control: LevelControl) -> &mut Channel {
-    match control {
-        LevelControl::StreamGame => &mut mix.game,
-        LevelControl::StreamVoice => &mut mix.voice,
-        _ => &mut mix.output,
-    }
+fn stream_row(
+    ui: &mut Ui,
+    state: &mut GuiState,
+    stream: Stream,
+    channel: Option<&mut Channel>,
+    enabled: bool,
+) {
+    ui.horizontal(|ui| {
+        let level = state.held.slider(
+            ui,
+            Level {
+                control: stream.control(),
+                label: stream.label(),
+                scale: Scale::Percent,
+                current: channel.as_ref().map(|channel| channel.level_percent),
+                enabled,
+            },
+        );
+        match channel {
+            Some(channel) => {
+                if let Some(percent) = level {
+                    channel.level_percent = percent;
+                }
+                ui.add_enabled(enabled, Checkbox::new(&mut channel.muted, "Mute"));
+            }
+            None => {
+                ui.add_enabled(false, Checkbox::new(&mut false, "Mute"));
+            }
+        }
+    });
 }

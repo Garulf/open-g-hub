@@ -1,4 +1,4 @@
-use eframe::egui::{self, RichText, Ui};
+use eframe::egui::{self, Label, RichText, Ui};
 use ogh_ipc::{Endpoint, Request};
 
 use crate::Shared;
@@ -61,6 +61,7 @@ impl GuiState {
 /// Draws one frame and returns the requests the user made in it.
 pub fn show(ui: &mut Ui, state: &mut GuiState) -> Vec<Request> {
     let mut requests = Vec::new();
+    state.held.release_if_idle(ui);
     if let Some(reason) = &state.shared.daemon_down {
         egui::CentralPanel::default().show(ui, |ui| daemon_down(ui, reason));
         return requests;
@@ -104,8 +105,10 @@ fn top_bar(ui: &mut Ui, shared: &mut Shared) {
     if let Some(error) = &shared.last_error {
         let dismissed = ui
             .horizontal(|ui| {
-                ui.colored_label(ui.visuals().error_fg_color, error);
-                ui.small_button("x").on_hover_text("Dismiss").clicked()
+                let dismissed = ui.small_button("x").on_hover_text("Dismiss").clicked();
+                let text = RichText::new(error).color(ui.visuals().error_fg_color);
+                ui.add(Label::new(text).wrap());
+                dismissed
             })
             .inner;
         if dismissed {

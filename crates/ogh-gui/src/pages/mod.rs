@@ -75,6 +75,25 @@ pub(crate) struct Level<'a> {
 }
 
 impl HeldLevel {
+    /// Forgets a hold once the pointer is up, for when its slider was not drawn at the
+    /// release (another page, daemon down, or a value that became unknown). On the release
+    /// frame itself the drawn slider still needs the hold, because egui applies the release
+    /// position as a click.
+    pub(crate) fn release_if_idle(&mut self, ui: &Ui) {
+        if self.0.is_none() {
+            return;
+        }
+        let (down, released) =
+            ui.input(|input| (input.pointer.any_down(), input.pointer.any_released()));
+        if down {
+            return;
+        }
+        if !released {
+            self.0 = None;
+        }
+        ui.ctx().request_repaint();
+    }
+
     /// Draws one level slider and returns the new value when the user changed it.
     pub(crate) fn slider(&mut self, ui: &mut Ui, level: Level<'_>) -> Option<u8> {
         ui.horizontal(|ui| {
