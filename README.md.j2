@@ -69,7 +69,7 @@ sudo cp packaging/linux/70-open-g-hub.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger
 ```
 
-Install the user unit and start it:
+Install the user units and start them:
 
 ```sh
 mkdir -p ~/.config/systemd/user
@@ -149,7 +149,7 @@ The tray menu has:
 - Profile: pick a saved profile
 - Sidetone: 0, 25, 50, 75 or 100 percent
 - Balance: 0 to 12 in steps of two, with 6 as the centre
-- Stream level: 0 to 100 percent for the stream output
+- Stream level: 0, 25, 50, 75 or 100 percent for the stream output
 - Switch audio on dock: the same toggle as `ogh autoswitch`
 - Open open-g-hub: starts `ogh-gui` from the folder `ogh-tray` runs from
 - Quit tray
