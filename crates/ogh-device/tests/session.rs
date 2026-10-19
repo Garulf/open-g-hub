@@ -12,7 +12,6 @@ use common::{
 use ogh_device::allowlist::Allowlist;
 use ogh_device::testing::{self, ScriptedTransport};
 use ogh_device::{DeviceError, Event, FeatureId, Refusal, Session};
-use ogh_protocol::features::device_info;
 use ogh_protocol::{Message, request};
 
 const DOCK_CYCLE: &str = "session-a/dock-cycle";
@@ -384,13 +383,7 @@ fn unlisted_function_is_refused_without_writing() {
     let before = device.writes().len();
 
     assert_not_allowlisted_without_writing(&mut session, &device, FeatureId::BATTERY_SOC, 1, &[]);
-    assert_eq!(
-        session.call(FeatureId::DEVICE_INFO, device_info::serial_number_request),
-        Err(DeviceError::NotAllowed {
-            feature: FeatureId::DEVICE_INFO,
-            function: 2
-        })
-    );
+    assert_not_allowlisted_without_writing(&mut session, &device, FeatureId::DEVICE_INFO, 2, &[]);
     assert_eq!(device.writes().len(), before);
 }
 
