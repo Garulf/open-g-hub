@@ -15,6 +15,8 @@ use ogh_ipc::{
     Connection, ErrorKind, Headset, IpcError, Notification, ProfileInfo, ProfileSettings, Request,
     Response, Setting, Status,
 };
+use ogh_protocol::features::headset_mix::GameVoiceBalance;
+use ogh_protocol::features::mixer_audio::{MixChannel, MixLevel, StreamMix};
 use ogh_protocol::features::noise_gate::NoiseGate;
 use ogh_protocol::features::sidetone::Sidetone;
 use tempfile::TempDir;
@@ -718,4 +720,135 @@ fn headset_changes_reach_the_auto_switch_and_its_outcome_shows_in_status() {
 
     drop(inputs);
     thread.join().unwrap();
+}
+
+#[test]
+fn manual_apply_during_automatic_writes_is_reapplied_after_they_finish() {
+    let harness = Harness::start_with(|store| {
+        store.save_profile("app", sidetone_profile(80)).unwrap();
+        store.link_app("app", "a.exe").unwrap();
+        store.save_profile("manual", sidetone_profile(50)).unwrap();
+    });
+    harness.connect(snapshot(3, NoiseGate::Off));
+
+    harness.focus("a.exe");
+    harness.let_focus_settle();
+    let (id, writes) = harness.write();
+    assert_eq!(writes, vec![DeviceWrite::Sidetone(Sidetone(5))]);
+
+    assert_eq!(
+        harness.request(Request::ApplyProfile {
+            name: "manual".to_string()
+        }),
+        Response::Done
+    );
+    harness.no_write();
+
+    harness.update(DeviceUpdate::WriteDone { id, result: Ok(()) });
+    assert_eq!(
+        harness.write_and_finish(),
+        vec![DeviceWrite::Sidetone(Sidetone(3))]
+    );
+    harness.no_write();
+    let status = harness.status();
+    assert_eq!(status.active_profile.as_deref(), Some("manual"));
+    assert_eq!(status.settings.profile.sidetone_percent, Some(50));
+    harness.finish();
+}
+
+#[test]
+fn save_profile_waits_for_writes_in_flight() {
+    let harness = Harness::start();
+    harness.connect(snapshot(0, NoiseGate::Off));
+
+    let set = harness.send(Request::Set {
+        setting: Setting::Sidetone { percent: 100 },
+    });
+    let (id, _) = harness.write();
+    let save = harness.send(Request::SaveProfile {
+        name: "loud".to_string(),
+    });
+    assert!(save.recv_timeout(QUIET).is_err(), "saved before WriteDone");
+
+    harness.update(DeviceUpdate::WriteDone { id, result: Ok(()) });
+    assert_eq!(set.recv_timeout(WAIT), Ok(Response::Done));
+    assert_eq!(save.recv_timeout(WAIT), Ok(Response::Done));
+    let loud = harness
+        .profiles()
+        .into_iter()
+        .find(|profile| profile.name == "loud")
+        .expect("the saved profile");
+    assert_eq!(loud.settings.sidetone_percent, Some(100));
+    harness.finish();
+}
+
+#[test]
+fn save_profile_waiting_for_writes_fails_when_the_device_closes() {
+    let harness = Harness::start();
+    harness.connect(snapshot(0, NoiseGate::Off));
+
+    let _set = harness.send(Request::Set {
+        setting: Setting::Sidetone { percent: 100 },
+    });
+    harness.write();
+    let save = harness.send(Request::SaveProfile {
+        name: "loud".to_string(),
+    });
+    harness.update(DeviceUpdate::Closed(Connection::NotFound));
+    expect_error(save.recv_timeout(WAIT).unwrap(), ErrorKind::NotConnected);
+    assert!(
+        harness
+            .profiles()
+            .iter()
+            .all(|profile| profile.name != "loud")
+    );
+    harness.finish();
+}
+
+fn docked_with_mix() -> DeviceSnapshot {
+    let channel = MixChannel {
+        level: MixLevel(16),
+        muted: false,
+    };
+    DeviceSnapshot {
+        headset_available: Some(false),
+        stream_mix: Some(StreamMix {
+            stream: channel,
+            inputs: [channel; 4],
+        }),
+        ..DeviceSnapshot::default()
+    }
+}
+
+#[test]
+fn default_profile_is_completed_once_the_headset_reports_its_settings() {
+    let harness = Harness::start();
+    let docked = docked_with_mix();
+    harness.connect(docked.clone());
+    let partial = profile_settings(&docked);
+    assert!(partial.stream_mix.is_some());
+    assert_eq!(harness.profiles()[0].settings, partial);
+
+    let in_use = DeviceSnapshot {
+        headset_available: Some(true),
+        sidetone: Some(Sidetone(3)),
+        balance: Some(GameVoiceBalance(6)),
+        noise_gate: Some(NoiseGate::Home),
+        ..docked
+    };
+    harness.update(DeviceUpdate::Refreshed(in_use.clone()));
+    assert_eq!(harness.profiles()[0].settings, profile_settings(&in_use));
+    harness.no_write();
+
+    let changed = DeviceSnapshot {
+        sidetone: Some(Sidetone(6)),
+        ..in_use.clone()
+    };
+    harness.update(DeviceUpdate::Refreshed(changed));
+    assert_eq!(harness.profiles()[0].settings, profile_settings(&in_use));
+    assert_eq!(
+        harness.write_and_finish(),
+        vec![DeviceWrite::Sidetone(Sidetone(3))]
+    );
+    harness.finish();
 }
