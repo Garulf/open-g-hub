@@ -1294,6 +1294,19 @@ fn mic_out_and_bluetooth_are_pinned_to_the_captured_bytes() {
 }
 
 #[test]
+fn set_request_refuses_changes_to_exactly_the_inputs_is_pinned_reports() {
+    for input in MixInput::ALL {
+        let mut mix = launch_mix();
+        *mix.input_mut(input) = channel(0, false);
+        assert_eq!(
+            mixer_audio::set_request(MIXER_AUDIO, &mix).is_err(),
+            input.is_pinned(),
+            "{input:?}"
+        );
+    }
+}
+
+#[test]
 fn eq_cards_mixing_graphic_and_parametric_bands_are_rejected() {
     let mut parametric = HEADPHONE_DEFAULT;
     parametric.bands[4].q = None;

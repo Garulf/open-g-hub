@@ -126,13 +126,21 @@ pub fn set_request(feature_index: u8, mix: &StreamMix) -> Result<Message, RangeE
 }
 
 fn check_pinned(input: MixInput, channel: MixChannel) -> Result<(), RangeError> {
-    let (level_what, mute_what) = match input {
-        MixInput::MicOut => ("Mic Out level (pinned)", "Mic Out mute (pinned)"),
-        MixInput::Bluetooth => ("Bluetooth level (pinned)", "Bluetooth mute (pinned)"),
-        MixInput::Game | MixInput::Voice => return Ok(()),
-    };
+    if !input.is_pinned() {
+        return Ok(());
+    }
+    let (level_what, mute_what) = pinned_labels(input);
     RangeError::check_one_of(level_what, channel.level.0, PINNED_LEVEL)?;
     RangeError::check_one_of(mute_what, u8::from(channel.muted), PINNED_MUTE)
+}
+
+fn pinned_labels(input: MixInput) -> (&'static str, &'static str) {
+    match input {
+        MixInput::MicOut => ("Mic Out level (pinned)", "Mic Out mute (pinned)"),
+        MixInput::Game => ("Game level (pinned)", "Game mute (pinned)"),
+        MixInput::Bluetooth => ("Bluetooth level (pinned)", "Bluetooth mute (pinned)"),
+        MixInput::Voice => ("Voice level (pinned)", "Voice mute (pinned)"),
+    }
 }
 
 fn push_channel(params: &mut Vec<u8>, channel: MixChannel) -> Result<(), RangeError> {
