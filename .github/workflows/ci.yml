@@ -38,3 +38,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
       - run: cargo build --workspace --release --locked --target x86_64-pc-windows-gnu
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-g-hub-windows-x86_64
+          path: |
+            target/x86_64-pc-windows-gnu/release/ogh.exe
+            target/x86_64-pc-windows-gnu/release/ogh-daemon.exe
+          if-no-files-found: error
