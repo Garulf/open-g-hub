@@ -1,3 +1,4 @@
+pub mod autoswitch;
 pub mod config;
 pub mod controller;
 pub mod convert;
@@ -15,6 +16,7 @@ use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use ogh_device::{Session, guard};
 use ogh_ipc::{Endpoint, Server};
 
+use crate::autoswitch::Command;
 use crate::config::Store;
 use crate::controller::{Controller, Input};
 use crate::device_worker::{DeviceCommand, DeviceUpdate, WorkerConfig};
@@ -44,7 +46,9 @@ pub fn run(paths: Paths) -> Result<(), String> {
         updates,
     );
     bridge_device_updates(update_rx, inputs.clone());
-    let controller = Controller::new(store, commands.clone(), Instant::now);
+    let audio_commands = start_auto_switch(&store, &paths, inputs.clone());
+    let controller =
+        Controller::new(store, commands.clone(), Instant::now).with_auto_switch(audio_commands);
     thread::spawn(move || controller.run(input_rx));
     ipc_server::serve(server, inputs.clone());
     start_focus_watcher(inputs.clone());
@@ -65,6 +69,31 @@ fn bridge_device_updates(updates: Receiver<DeviceUpdate>, inputs: Sender<Input>)
             }
         }
     });
+}
+
+fn start_auto_switch(store: &Store, paths: &Paths, inputs: Sender<Input>) -> Sender<Command> {
+    let config = store
+        .config()
+        .map(|config| config.audio_switch.clone())
+        .unwrap_or_default();
+    let (outcome_tx, outcome_rx) = unbounded();
+    let commands = autoswitch::spawn(
+        ogh_audio::system_router,
+        config,
+        paths.state_file.clone(),
+        outcome_tx,
+    );
+    thread::spawn(move || {
+        for outcome in outcome_rx {
+            if let Some(error) = &outcome.error {
+                tracing::warn!("audio auto-switch: {error}");
+            }
+            if inputs.send(Input::AutoSwitch(outcome)).is_err() {
+                return;
+            }
+        }
+    });
+    commands
 }
 
 fn start_focus_watcher(inputs: Sender<Input>) {

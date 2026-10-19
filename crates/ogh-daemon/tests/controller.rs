@@ -4,7 +4,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use ogh_daemon::config::Store;
+use ogh_daemon::autoswitch::{AudioSwitchOutcome, Command};
+use ogh_daemon::config::{AudioSwitchConfig, Store};
 use ogh_daemon::controller::{Controller, FOCUS_SETTLE, Input};
 use ogh_daemon::convert::profile_settings;
 use ogh_daemon::device_worker::{DeviceCommand, DeviceUpdate};
@@ -647,4 +648,74 @@ fn default_profile_creation_retries_after_a_failed_save() {
     assert_eq!(harness.profiles()[0].settings, profile_settings(&first));
     assert!(path.exists());
     harness.finish();
+}
+
+#[test]
+fn headset_changes_reach_the_auto_switch_and_its_outcome_shows_in_status() {
+    let dir = TempDir::new().unwrap();
+    let store = Store::open(&dir.path().join("config.toml"));
+    let (devices, _device) = unbounded();
+    let (commands, command_rx) = unbounded();
+    let (inputs, input_rx) = unbounded();
+    let controller = Controller::new(store, devices, Instant::now).with_auto_switch(commands);
+    let thread = thread::spawn(move || controller.run(input_rx));
+    let status = |inputs: &Sender<Input>| {
+        let (reply, response) = unbounded();
+        let request = Request::Status;
+        inputs.send(Input::Ipc { request, reply }).unwrap();
+        match response.recv_timeout(WAIT).expect("a reply") {
+            Response::Status(status) => status,
+            other => panic!("expected a status, got {other:?}"),
+        }
+    };
+    let next_command = || command_rx.recv_timeout(WAIT).expect("a command");
+
+    assert_eq!(
+        next_command(),
+        Command::Configure(AudioSwitchConfig::default())
+    );
+    assert!(!status(&inputs).auto_switch.active);
+
+    inputs
+        .send(Input::Device(connected(snapshot(0, NoiseGate::Off))))
+        .unwrap();
+    assert_eq!(next_command(), Command::Headset(Headset::InUse));
+
+    inputs
+        .send(Input::AutoSwitch(AudioSwitchOutcome {
+            active: true,
+            error: Some("could not set render.console: gone".to_string()),
+        }))
+        .unwrap();
+    let auto_switch = status(&inputs).auto_switch;
+    assert!(auto_switch.active);
+    assert_eq!(
+        auto_switch.error.as_deref(),
+        Some("could not set render.console: gone")
+    );
+
+    let (reply, response) = unbounded();
+    let request = Request::SetAutoSwitch { enabled: true };
+    inputs.send(Input::Ipc { request, reply }).unwrap();
+    assert!(matches!(response.recv_timeout(WAIT), Ok(Response::Done)));
+    assert_eq!(
+        next_command(),
+        Command::Configure(AudioSwitchConfig {
+            enabled: true,
+            ..AudioSwitchConfig::default()
+        })
+    );
+    assert!(status(&inputs).auto_switch.enabled);
+
+    inputs
+        .send(Input::Device(DeviceUpdate::Closed(Connection::NotFound)))
+        .unwrap();
+    assert_eq!(next_command(), Command::Headset(Headset::Unknown));
+    assert_eq!(
+        command_rx.recv_timeout(QUIET),
+        Err(crossbeam_channel::RecvTimeoutError::Timeout)
+    );
+
+    drop(inputs);
+    thread.join().unwrap();
 }

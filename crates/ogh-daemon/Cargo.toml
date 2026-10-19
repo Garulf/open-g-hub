@@ -16,6 +16,7 @@ path = "src/main.rs"
 crossbeam-channel = "0.5"
 ctrlc = { version = "3.5.2", features = ["termination"] }
 directories = "6"
+ogh-audio = { path = "../ogh-audio" }
 ogh-device = { path = "../ogh-device" }
 ogh-focus = { path = "../ogh-focus" }
 ogh-ipc = { path = "../ogh-ipc" }

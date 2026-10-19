@@ -4,11 +4,12 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use ogh_device::{DeviceError, FeatureInfo};
 use ogh_ipc::{
-    AutoSwitchStatus, Connection, ErrorKind, Feature, FocusStatus, Hello, IPC_VERSION, IpcError,
-    Notification, ProfileInfo, ProfileSettings, Request, Response, Setting, Status,
+    AutoSwitchStatus, Connection, ErrorKind, Feature, FocusStatus, Headset, Hello, IPC_VERSION,
+    IpcError, Notification, ProfileInfo, ProfileSettings, Request, Response, Setting, Status,
 };
 
-use crate::config::Store;
+use crate::autoswitch::{AudioSwitchOutcome, Command};
+use crate::config::{AudioSwitchConfig, Store};
 use crate::convert;
 use crate::device_worker::{DeviceCommand, DeviceUpdate};
 use crate::snapshot::{DeviceSnapshot, DeviceWrite};
@@ -26,6 +27,7 @@ pub enum Input {
     Device(DeviceUpdate),
     Focus(Option<String>),
     FocusUnavailable(String),
+    AutoSwitch(AudioSwitchOutcome),
 }
 
 struct PendingWrite {
@@ -64,6 +66,9 @@ pub struct Controller {
     active: Option<String>,
     subscribers: Vec<Sender<Notification>>,
     last_status: Option<Status>,
+    auto_switch: Option<Sender<Command>>,
+    announced_headset: Headset,
+    audio: AudioSwitchOutcome,
 }
 
 impl Controller {
@@ -90,10 +95,20 @@ impl Controller {
             active: None,
             subscribers: Vec::new(),
             last_status: None,
+            auto_switch: None,
+            announced_headset: Headset::Unknown,
+            audio: AudioSwitchOutcome::default(),
         };
         controller.active = controller.resolve_active();
         controller.last_status = Some(controller.status());
         controller
+    }
+
+    /// Feeds headset changes and the audio settings to the auto-switch thread.
+    pub fn with_auto_switch(mut self, commands: Sender<Command>) -> Controller {
+        self.auto_switch = Some(commands);
+        self.configure_auto_switch();
+        self
     }
 
     pub fn status(&self) -> Status {
@@ -114,8 +129,8 @@ impl Controller {
                     .config()
                     .map(|config| config.audio_switch.enabled)
                     .unwrap_or(false),
-                active: false,
-                error: None,
+                active: self.audio.active,
+                error: self.audio.error.clone(),
             },
             config_error: self.store.config_error(),
         }
@@ -134,6 +149,7 @@ impl Controller {
                 Err(RecvTimeoutError::Disconnected) => return,
             }
             self.settle_due_focus();
+            self.announce_headset();
             self.notify();
         }
     }
@@ -159,11 +175,35 @@ impl Controller {
                     deadline: (self.clock)() + FOCUS_SETTLE,
                 });
             }
+            Input::AutoSwitch(outcome) => self.audio = outcome,
             Input::FocusUnavailable(_) => {
                 self.focus_available = false;
                 self.pending_focus = None;
                 self.settle_focus(None);
             }
+        }
+    }
+
+    fn announce_headset(&mut self) {
+        let headset = self.snapshot.headset();
+        if headset != self.announced_headset {
+            self.announced_headset = headset;
+            self.send_to_auto_switch(Command::Headset(headset));
+        }
+    }
+
+    fn configure_auto_switch(&self) {
+        let config = self
+            .store
+            .config()
+            .map(|config| config.audio_switch.clone())
+            .unwrap_or_else(|_| AudioSwitchConfig::default());
+        self.send_to_auto_switch(Command::Configure(config));
+    }
+
+    fn send_to_auto_switch(&self, command: Command) {
+        if let Some(commands) = &self.auto_switch {
+            let _ = commands.send(command);
         }
     }
 
@@ -425,10 +465,13 @@ impl Controller {
             Request::UnlinkApp { app } => {
                 respond(&reply, self.mutate_store(|store| store.unlink_app(&app)))
             }
-            Request::SetAutoSwitch { enabled } => respond(
-                &reply,
-                self.mutate_store(|store| store.set_audio_switch(enabled)),
-            ),
+            Request::SetAutoSwitch { enabled } => {
+                let response = self.mutate_store(|store| store.set_audio_switch(enabled));
+                if matches!(response, Response::Done) {
+                    self.configure_auto_switch();
+                }
+                respond(&reply, response);
+            }
             Request::Subscribe => respond(
                 &reply,
                 Response::Error(IpcError {
