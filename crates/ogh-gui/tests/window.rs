@@ -1,107 +1,19 @@
+use eframe::egui::Pos2;
 use eframe::egui::accesskit::Role;
-use eframe::egui::{Pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use ogh_gui::icon::{self, IconSize};
 use ogh_gui::link::LinkEvent;
-use ogh_gui::{GuiState, Page, Shared, show};
-use ogh_ipc::{
-    AutoSwitchStatus, Channel, Connection, DeviceSettings, FocusStatus, Headset, ProfileSettings,
-    Request, Setting, Status, StreamMixSetting,
-};
+use ogh_gui::{GuiState, Page, Shared};
+use ogh_ipc::{Connection, Request, Setting};
+
+mod common;
+use common::{Window, connected, gui_with, harness, mix, on_page, set, status};
 
 #[cfg(not(windows))]
 const HINT: &str = "systemctl --user start ogh-daemon";
 #[cfg(windows)]
 const HINT: &str = "start ogh-daemon.exe, or run \"ogh autostart on\"";
-
-struct Window {
-    gui: GuiState,
-    sent: Vec<Request>,
-}
-
-fn harness(gui: GuiState) -> Harness<'static, Window> {
-    Harness::builder()
-        .with_size(vec2(820.0, 560.0))
-        .build_ui_state(
-            |ui, window: &mut Window| {
-                let requests = show(ui, &mut window.gui);
-                window.sent.extend(requests);
-            },
-            Window {
-                gui,
-                sent: Vec::new(),
-            },
-        )
-}
-
-fn mix() -> StreamMixSetting {
-    StreamMixSetting {
-        output: Channel {
-            level_percent: 80,
-            muted: false,
-        },
-        game: Channel {
-            level_percent: 70,
-            muted: false,
-        },
-        voice: Channel {
-            level_percent: 60,
-            muted: false,
-        },
-    }
-}
-
-fn status(connection: Connection) -> Status {
-    Status {
-        connection,
-        headset: Headset::InUse,
-        battery: None,
-        firmware: None,
-        settings: DeviceSettings {
-            profile: ProfileSettings {
-                sidetone_percent: Some(50),
-                balance: Some(6),
-                stream_mix: Some(mix()),
-                ..ProfileSettings::default()
-            },
-            volume_percent: Some(40),
-            led_brightness_percent: Some(30),
-            sleep_after_minutes: Some(0),
-            tones: Some(1),
-        },
-        active_profile: Some("Default".to_string()),
-        focus: FocusStatus {
-            available: true,
-            app: Some("firefox".to_string()),
-        },
-        auto_switch: AutoSwitchStatus {
-            enabled: false,
-            active: false,
-            error: None,
-        },
-        config_error: None,
-    }
-}
-
-fn gui_with(status: Status) -> GuiState {
-    let mut shared = Shared::default();
-    shared.apply(LinkEvent::Status(Box::new(status)));
-    GuiState::new(shared)
-}
-
-fn connected() -> GuiState {
-    gui_with(status(Connection::Connected))
-}
-
-fn on_page(mut gui: GuiState, page: Page) -> GuiState {
-    gui.page = page;
-    gui
-}
-
-fn set(setting: Setting) -> Request {
-    Request::Set { setting }
-}
 
 fn sidetone_value(harness: &Harness<'_, Window>) -> Option<f64> {
     harness

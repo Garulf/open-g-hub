@@ -87,3 +87,19 @@ pub fn auto_switch_text(auto: &AutoSwitchStatus) -> String {
     }
     text
 }
+
+pub fn gain_label(gain_db: f32) -> String {
+    format!("{gain_db:+.1}")
+}
+
+pub fn parse_gain(text: &str) -> Option<f64> {
+    text.trim().trim_end_matches("dB").trim().parse().ok()
+}
+
+pub fn frequency_label(freq_hz: u16) -> String {
+    if freq_hz < 1000 {
+        return format!("{freq_hz} Hz");
+    }
+    let khz = format!("{:.3}", f64::from(freq_hz) / 1000.0);
+    format!("{} kHz", khz.trim_end_matches('0').trim_end_matches('.'))
+}

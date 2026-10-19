@@ -1,11 +1,12 @@
 pub(crate) mod device;
+pub mod eq;
 pub(crate) mod mixer;
 
 use eframe::egui::{self, Slider, Ui};
 use ogh_ipc::{Request, Setting};
 
 use crate::app::{GuiState, Page};
-use crate::describe::balance_label;
+use crate::describe::{balance_label, gain_label, parse_gain};
 
 pub(crate) const NOT_READ_YET: &str = "not read yet";
 
@@ -19,7 +20,9 @@ pub(crate) fn show(ui: &mut Ui, state: &mut GuiState, requests: &mut Vec<Request
     match state.page {
         Page::Mixer => mixer::show(ui, state, requests),
         Page::Device => device::show(ui, state, requests),
-        Page::Equalizer | Page::Microphone | Page::Profiles => {
+        Page::Equalizer => eq::equalizer(ui, state, requests),
+        Page::Microphone => eq::microphone(ui, state, requests),
+        Page::Profiles => {
             ui.label("Not available yet.");
         }
     }
@@ -34,12 +37,14 @@ pub(crate) enum LevelControl {
     StreamVoice,
     Volume,
     LedBrightness,
+    EqGain(eq::Target, u8),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Scale {
     Percent,
     Balance,
+    Gain,
 }
 
 impl Scale {
@@ -47,6 +52,7 @@ impl Scale {
         match self {
             Scale::Percent => 100,
             Scale::Balance => 12,
+            Scale::Gain => eq::GAIN_STEPS,
         }
     }
 
@@ -57,6 +63,10 @@ impl Scale {
             Scale::Balance => slider
                 .custom_formatter(|value, _| balance_label(value as u8))
                 .custom_parser(|text| text.split_whitespace().next()?.parse().ok()),
+            Scale::Gain => slider
+                .vertical()
+                .custom_formatter(|step, _| gain_label(eq::step_to_gain(step as u8)))
+                .custom_parser(|text| parse_gain(text).map(eq::gain_to_step_value)),
         }
     }
 }
