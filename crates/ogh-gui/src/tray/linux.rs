@@ -1,6 +1,6 @@
 use std::sync::{Arc, OnceLock};
 
-use crossbeam_channel::{Sender, unbounded};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{CheckmarkItem, MenuItem, StandardItem, SubMenu};
 use ksni::{Category, Icon, ToolTip, Tray};
@@ -173,23 +173,36 @@ pub fn run() -> Result<(), String> {
     let _ = handle_cell.set(handle.clone());
     handle.update(TrayModel::drain);
 
-    while let Ok(action) = received.recv() {
-        match action {
-            TrayAction::Request(request) => {
-                if let Some(link) = &link {
+    let outcome = serve(&received, link.as_deref(), &mut launcher, |error| {
+        handle.update(|model| model.shared.last_error = Some(error));
+    });
+    handle.shutdown().wait();
+    outcome
+}
+
+/// Runs the actions the menu sends until Quit. A closed channel means the tray service died.
+fn serve(
+    received: &Receiver<TrayAction>,
+    link: Option<&DaemonLink>,
+    launcher: &mut Launcher,
+    report: impl Fn(String),
+) -> Result<(), String> {
+    loop {
+        match received.recv() {
+            Ok(TrayAction::Request(request)) => {
+                if let Some(link) = link {
                     link.send(request);
                 }
             }
-            TrayAction::OpenWindow => {
+            Ok(TrayAction::OpenWindow) => {
                 if let Err(error) = launcher.open() {
-                    handle.update(|model| model.shared.last_error = Some(error));
+                    report(error);
                 }
             }
-            TrayAction::Quit => break,
+            Ok(TrayAction::Quit) => return Ok(()),
+            Err(_) => return Err("the tray service stopped".to_string()),
         }
     }
-    handle.shutdown().wait();
-    Ok(())
 }
 
 #[cfg(test)]
@@ -201,8 +214,9 @@ mod tests {
         Headset, ProfileInfo, ProfileSettings, Request, Setting, Status, StreamMixSetting,
     };
 
-    use super::{TrayModel, argb, to_ksni};
+    use super::{TrayModel, argb, serve, to_ksni};
     use crate::Shared;
+    use crate::launcher::Launcher;
     use crate::link::LinkEvent;
     use crate::tray_menu::{TrayAction, TrayItem, menu};
 
@@ -413,5 +427,43 @@ mod tests {
             argb(&[1, 2, 3, 4, 5, 6, 7, 8]),
             vec![4, 1, 2, 3, 8, 5, 6, 7]
         );
+    }
+
+    #[test]
+    fn quit_ends_the_loop_cleanly() {
+        let (actions, received) = unbounded();
+        actions.send(TrayAction::Quit).unwrap();
+        let mut launcher = Launcher::new("missing".into());
+
+        assert_eq!(serve(&received, None, &mut launcher, |_| {}), Ok(()));
+    }
+
+    #[test]
+    fn a_stopped_service_is_an_error() {
+        let (actions, received) = unbounded();
+        drop(actions);
+        let mut launcher = Launcher::new("missing".into());
+
+        let outcome = serve(&received, None, &mut launcher, |_| {});
+
+        assert_eq!(outcome, Err("the tray service stopped".to_string()));
+    }
+
+    #[test]
+    fn a_failed_launch_is_reported() {
+        let (actions, received) = unbounded();
+        actions.send(TrayAction::OpenWindow).unwrap();
+        actions.send(TrayAction::Quit).unwrap();
+        let mut launcher = Launcher::new("/nonexistent/ogh-gui".into());
+        let reported = std::cell::RefCell::new(Vec::new());
+
+        serve(&received, None, &mut launcher, |error| {
+            reported.borrow_mut().push(error)
+        })
+        .unwrap();
+
+        let reported = reported.into_inner();
+        assert_eq!(reported.len(), 1);
+        assert!(reported[0].contains("ogh-gui"), "{}", reported[0]);
     }
 }

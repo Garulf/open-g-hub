@@ -52,6 +52,16 @@ fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
 }
 
 #[cfg(unix)]
+struct StopOnDrop<'a>(&'a Path);
+
+#[cfg(unix)]
+impl Drop for StopOnDrop<'_> {
+    fn drop(&mut self) {
+        let _ = fs::write(self.0, "");
+    }
+}
+
+#[cfg(unix)]
 #[test]
 fn launcher_does_not_start_a_second_window() {
     use std::os::unix::fs::PermissionsExt;
@@ -71,6 +81,7 @@ fn launcher_does_not_start_a_second_window() {
     .unwrap();
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
 
+    let _stop_on_failure = StopOnDrop(&stop);
     let mut launcher = Launcher::new(script);
     launcher.open().unwrap();
     launcher.open().unwrap();

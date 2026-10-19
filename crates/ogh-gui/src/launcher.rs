@@ -41,7 +41,13 @@ impl Launcher {
         if let Some(child) = &mut self.child {
             match child.try_wait() {
                 Ok(None) => return Ok(()),
-                Ok(Some(_)) | Err(_) => self.child = None,
+                Ok(Some(_)) => self.child = None,
+                Err(error) => {
+                    return Err(format!(
+                        "could not check the window process {}: {error}",
+                        self.program.display()
+                    ));
+                }
             }
         }
         let child = Command::new(&self.program)
