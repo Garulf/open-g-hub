@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::unbounded;
-use ogh_focus::hyprland::{parse_event, resolve, socket_path, watch};
+use ogh_focus::hyprland::{parse_event, resolve, socket_path, spawn_in, watch};
 
 const WAIT: Duration = Duration::from_secs(5);
 
@@ -149,4 +149,31 @@ fn watcher_exits_after_the_receiver_is_dropped() {
         std::thread::sleep(Duration::from_millis(10));
     }
     watcher.join().unwrap();
+}
+
+#[test]
+fn without_a_runtime_dir_focus_is_unavailable() {
+    let (tx, _rx) = unbounded();
+    assert!(spawn_in(None, Duration::from_millis(20), tx).is_err());
+}
+
+#[test]
+fn watcher_waits_for_hyprland_to_create_its_socket() {
+    let runtime = tempfile::tempdir().unwrap();
+    let (tx, rx) = unbounded();
+    let watcher = spawn_in(
+        Some(runtime.path().to_path_buf()),
+        Duration::from_millis(20),
+        tx,
+    );
+    assert!(watcher.is_ok(), "{:?}", watcher.err());
+
+    let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap_or("late".to_string());
+    let dir = runtime.path().join("hypr").join(signature);
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = UnixListener::bind(dir.join(".socket2.sock")).unwrap();
+    let (mut conn, _) = listener.accept().unwrap();
+    conn.write_all(b"activewindow>>CS2,Counter-Strike 2\n")
+        .unwrap();
+    assert_eq!(rx.recv_timeout(WAIT), Ok(Some("cs2".to_string())));
 }

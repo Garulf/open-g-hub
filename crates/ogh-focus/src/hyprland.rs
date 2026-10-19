@@ -50,17 +50,25 @@ pub fn resolve(runtime_dir: &Path, signature: Option<&str>) -> Option<PathBuf> {
 }
 
 pub(crate) fn spawn(on_focus: Sender<Option<String>>) -> Result<JoinHandle<()>, Unavailable> {
-    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .ok_or_else(|| Unavailable(NEEDS_HYPRLAND.to_string()))?;
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+    spawn_in(runtime_dir, RETRY, on_focus)
+}
+
+/// Watches the Hyprland instance under `runtime_dir`, the user's
+/// `XDG_RUNTIME_DIR`. Without one there is no Hyprland to find; with one, a
+/// socket that does not exist yet is waited for, since Hyprland may start
+/// after the daemon.
+pub fn spawn_in(
+    runtime_dir: Option<PathBuf>,
+    retry: Duration,
+    on_focus: Sender<Option<String>>,
+) -> Result<JoinHandle<()>, Unavailable> {
+    let runtime_dir = runtime_dir.ok_or_else(|| Unavailable(NEEDS_HYPRLAND.to_string()))?;
     let resolve = move || {
         let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok();
         resolve(&runtime_dir, signature.as_deref())
     };
-    if resolve().is_none() {
-        return Err(Unavailable(NEEDS_HYPRLAND.to_string()));
-    }
-    Ok(watch(resolve, RETRY, on_focus))
+    Ok(watch(resolve, retry, on_focus))
 }
 
 /// Reads focus events from the socket `socket` resolves to, reconnecting after
