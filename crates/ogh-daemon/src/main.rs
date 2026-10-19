@@ -60,5 +60,58 @@ fn start(args: Args) -> Result<(), String> {
         None => Destination::Stderr,
     };
     logging::init(destination)?;
-    ogh_daemon::run(paths)
+    logged(ogh_daemon::run(paths))
+}
+
+fn logged(result: Result<(), String>) -> Result<(), String> {
+    result.inspect_err(|message| tracing::error!("ogh-daemon stopped: {message}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    use super::logged;
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn log_of(result: Result<(), String>) -> (Result<(), String>, String) {
+        let captured = Captured::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let returned = tracing::subscriber::with_default(subscriber, || logged(result));
+        let text = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        (returned, text)
+    }
+
+    #[test]
+    fn startup_failure_is_written_to_the_log() {
+        let (returned, text) = log_of(Err("cannot bind the pipe".into()));
+        assert_eq!(returned, Err("cannot bind the pipe".into()));
+        assert!(text.contains("ERROR"), "{text}");
+        assert!(text.contains("cannot bind the pipe"), "{text}");
+    }
+
+    #[test]
+    fn clean_exit_logs_nothing() {
+        let (returned, text) = log_of(Ok(()));
+        assert_eq!(returned, Ok(()));
+        assert_eq!(text, "");
+    }
 }
