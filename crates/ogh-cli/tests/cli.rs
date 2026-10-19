@@ -7,7 +7,7 @@ use clap::Parser;
 use ogh_cli::commands::{Cli, RunOptions, run};
 use ogh_cli::error::CliError;
 use ogh_device::testing::{ScriptedTransport, frame_from_hex};
-use ogh_device::{DeviceError, Session};
+use ogh_device::{DeviceError, FeatureId, Refusal, Session};
 use serde_json::{Value, json};
 
 const LAUNCH: &str = "session-a/ghub-launch";
@@ -393,6 +393,15 @@ fn device_error_exits_5() {
             code: 5,
         },
         DeviceError::Io("boom".into()),
+        DeviceError::NotAllowed {
+            feature: FeatureId::BATTERY_SOC,
+            function: 1,
+        },
+        DeviceError::Refused {
+            feature: FeatureId::HEADSET_SIDETONE,
+            function: 1,
+            reason: Refusal::Params,
+        },
     ] {
         let error = CliError::Device(device_error);
 

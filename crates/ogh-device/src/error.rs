@@ -1,6 +1,6 @@
 use std::fmt;
 
-use ogh_protocol::CentppError;
+use ogh_protocol::{CentppError, GHUB_SW_ID};
 
 use crate::FeatureId;
 
@@ -11,6 +11,12 @@ pub enum DeviceError {
     NotAllowed {
         feature: FeatureId,
         function: u8,
+    },
+    /// The call is allowlisted, but this message for it may not be sent.
+    Refused {
+        feature: FeatureId,
+        function: u8,
+        reason: Refusal,
     },
     /// The device answered with an error frame. `code` is raw: its mapping to
     /// the agent's error names is unverified.
@@ -25,6 +31,29 @@ pub enum DeviceError {
     /// The operating system refused to open the device.
     AccessDenied(String),
     Io(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// The message is not addressed to the feature's discovered index.
+    FeatureIndex,
+    /// The message does not carry our sw_id.
+    SwId,
+    /// A parameter rule refused the params.
+    Params,
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FeatureIndex => write!(
+                f,
+                "the message is not addressed to the feature's discovered index"
+            ),
+            Self::SwId => write!(f, "the message does not carry sw_id {GHUB_SW_ID:#x}"),
+            Self::Params => write!(f, "its parameters are outside what G Hub was seen sending"),
+        }
+    }
 }
 
 struct FeatureName(FeatureId);
@@ -55,6 +84,15 @@ impl fmt::Display for DeviceError {
                 f,
                 "refusing to send function {function} of feature {}: G Hub was never seen \
                  sending it, so it is not on the allowlist",
+                FeatureName(*feature)
+            ),
+            Self::Refused {
+                feature,
+                function,
+                reason,
+            } => write!(
+                f,
+                "refusing to send function {function} of feature {}: {reason}",
                 FeatureName(*feature)
             ),
             Self::Rejected {

@@ -26,7 +26,7 @@ mod session;
 pub mod testing;
 mod transport;
 
-pub use error::DeviceError;
+pub use error::{DeviceError, Refusal};
 pub use ogh_protocol::FeatureId;
 pub use ogh_protocol::discovery::FeatureInfo;
 pub use ogh_protocol::features::Event;

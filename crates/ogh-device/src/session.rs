@@ -12,7 +12,7 @@ use ogh_protocol::{
 };
 
 use crate::allowlist::Allowlist;
-use crate::error::DeviceError;
+use crate::error::{DeviceError, Refusal};
 use crate::transport::Transport;
 use crate::{FeatureId, HidTransport, guard, param_rules};
 
@@ -245,21 +245,36 @@ impl<T: Transport> Session<T> {
     /// function) must be allowlisted, and its params must pass any parameter
     /// rule for that call. Nothing is written otherwise.
     fn send(&mut self, id: FeatureId, msg: Message) -> Result<Vec<u8>, DeviceError> {
-        let allowed = self.index_of(id).ok() == Some(msg.feature_index)
-            && msg.sw_id == GHUB_SW_ID
-            && self.allowlist.permits(id, msg.function)
-            && param_rules::permits(id, msg.function, &msg.params);
-        if !allowed {
-            return Err(DeviceError::NotAllowed {
-                feature: id,
-                function: msg.function,
-            });
-        }
+        self.check_sendable(id, &msg)?;
         let frame = encode(A50X_PREFIX, SINGLE_FRAME, &msg)
             .map_err(|e| DeviceError::Io(format!("cannot encode request: {e}")))?;
         self.drain_pending()?;
         self.transport.write(&frame)?;
         self.await_reply(&msg)
+    }
+
+    fn check_sendable(&self, id: FeatureId, msg: &Message) -> Result<(), DeviceError> {
+        let refused = |reason| DeviceError::Refused {
+            feature: id,
+            function: msg.function,
+            reason,
+        };
+        if self.index_of(id)? != msg.feature_index {
+            return Err(refused(Refusal::FeatureIndex));
+        }
+        if msg.sw_id != GHUB_SW_ID {
+            return Err(refused(Refusal::SwId));
+        }
+        if !self.allowlist.permits(id, msg.function) {
+            return Err(DeviceError::NotAllowed {
+                feature: id,
+                function: msg.function,
+            });
+        }
+        if !param_rules::permits(id, msg.function, &msg.params) {
+            return Err(refused(Refusal::Params));
+        }
+        Ok(())
     }
 
     /// Queues events already waiting and discards everything else, so a late

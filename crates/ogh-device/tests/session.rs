@@ -11,7 +11,7 @@ use common::{
 };
 use ogh_device::allowlist::Allowlist;
 use ogh_device::testing::{self, ScriptedTransport};
-use ogh_device::{DeviceError, Event, FeatureId, Session};
+use ogh_device::{DeviceError, Event, FeatureId, Refusal, Session};
 use ogh_protocol::features::device_info;
 use ogh_protocol::{Message, request};
 
@@ -42,7 +42,7 @@ fn open_scripted() -> (Session<ScriptedTransport>, ScriptedTransport) {
     (session, handle)
 }
 
-fn assert_refused_without_writing(
+fn assert_not_allowlisted_without_writing(
     session: &mut Session<ScriptedTransport>,
     device: &ScriptedTransport,
     id: FeatureId,
@@ -55,6 +55,25 @@ fn assert_refused_without_writing(
         Err(DeviceError::NotAllowed {
             feature: id,
             function
+        })
+    );
+    assert_eq!(device.writes().len(), before);
+}
+
+fn assert_params_refused_without_writing(
+    session: &mut Session<ScriptedTransport>,
+    device: &ScriptedTransport,
+    id: FeatureId,
+    function: u8,
+    params: &[u8],
+) {
+    let before = device.writes().len();
+    assert_eq!(
+        session.request(id, function, params),
+        Err(DeviceError::Refused {
+            feature: id,
+            function,
+            reason: Refusal::Params
         })
     );
     assert_eq!(device.writes().len(), before);
@@ -364,7 +383,7 @@ fn unlisted_function_is_refused_without_writing() {
     let (mut session, device) = open_scripted();
     let before = device.writes().len();
 
-    assert_refused_without_writing(&mut session, &device, FeatureId::BATTERY_SOC, 1, &[]);
+    assert_not_allowlisted_without_writing(&mut session, &device, FeatureId::BATTERY_SOC, 1, &[]);
     assert_eq!(
         session.call(FeatureId::DEVICE_INFO, device_info::serial_number_request),
         Err(DeviceError::NotAllowed {
@@ -380,7 +399,13 @@ fn denied_feature_is_refused_without_writing() {
     let (mut session, device) = open_scripted();
 
     for function in [0, 1] {
-        assert_refused_without_writing(&mut session, &device, FeatureId::MEMFAULT, function, &[0]);
+        assert_not_allowlisted_without_writing(
+            &mut session,
+            &device,
+            FeatureId::MEMFAULT,
+            function,
+            &[0],
+        );
     }
 }
 
@@ -392,9 +417,10 @@ fn builder_targeting_another_index_is_refused_without_writing() {
 
     assert_eq!(
         session.call(FeatureId::HEADSET_SIDETONE, |_| request(dfu_index, 1, &[])),
-        Err(DeviceError::NotAllowed {
+        Err(DeviceError::Refused {
             feature: FeatureId::HEADSET_SIDETONE,
-            function: 1
+            function: 1,
+            reason: Refusal::FeatureIndex
         })
     );
     assert_eq!(device.writes().len(), before);
@@ -414,9 +440,10 @@ fn builder_with_another_sw_id_is_refused_without_writing() {
 
     assert_eq!(
         result,
-        Err(DeviceError::NotAllowed {
+        Err(DeviceError::Refused {
             feature: FeatureId::BATTERY_SOC,
-            function: 0
+            function: 0,
+            reason: Refusal::SwId
         })
     );
     assert_eq!(device.writes().len(), before);
@@ -427,7 +454,7 @@ fn set_custom_eq_to_a_factory_slot_is_refused_without_writing() {
     let (mut session, device) = open_scripted();
 
     for slot in [0, 1, 2, 4, 0xff] {
-        assert_refused_without_writing(
+        assert_params_refused_without_writing(
             &mut session,
             &device,
             FeatureId::ADVANCED_PARA_EQ,
@@ -435,7 +462,13 @@ fn set_custom_eq_to_a_factory_slot_is_refused_without_writing() {
             &[1, slot, 0],
         );
     }
-    assert_refused_without_writing(&mut session, &device, FeatureId::ADVANCED_PARA_EQ, 2, &[1]);
+    assert_params_refused_without_writing(
+        &mut session,
+        &device,
+        FeatureId::ADVANCED_PARA_EQ,
+        2,
+        &[1],
+    );
 }
 
 #[test]
@@ -504,7 +537,7 @@ fn every_call_ghub_sent_in_session_b_settings_passes_the_rules() {
 fn assert_all_refused(id: FeatureId, function: u8, cases: &[Vec<u8>]) {
     let (mut session, device) = open_scripted();
     for params in cases {
-        assert_refused_without_writing(&mut session, &device, id, function, params);
+        assert_params_refused_without_writing(&mut session, &device, id, function, params);
     }
 }
 
@@ -801,6 +834,42 @@ fn timeout_message_does_not_claim_a_duration() {
     let message = DeviceError::Timeout.to_string();
 
     assert!(!message.contains("second"), "{message}");
+}
+
+#[test]
+fn refusal_messages_do_not_blame_the_allowlist() {
+    for reason in [Refusal::FeatureIndex, Refusal::SwId, Refusal::Params] {
+        let message = DeviceError::Refused {
+            feature: FeatureId::ADVANCED_PARA_EQ,
+            function: 2,
+            reason,
+        }
+        .to_string();
+
+        assert!(!message.contains("allowlist"), "{message}");
+        assert!(!message.contains("never seen"), "{message}");
+    }
+    assert_eq!(
+        DeviceError::Refused {
+            feature: FeatureId::ADVANCED_PARA_EQ,
+            function: 2,
+            reason: Refusal::Params
+        }
+        .to_string(),
+        "refusing to send function 2 of feature 0x020d (AdvancedParaEq): \
+         its parameters are outside what G Hub was seen sending"
+    );
+}
+
+#[test]
+fn allowlist_miss_message_names_the_allowlist() {
+    let message = DeviceError::NotAllowed {
+        feature: FeatureId::BATTERY_SOC,
+        function: 1,
+    }
+    .to_string();
+
+    assert!(message.contains("not on the allowlist"), "{message}");
 }
 
 #[test]
