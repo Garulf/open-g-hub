@@ -29,6 +29,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_millis(150);
 const WAIT: Duration = Duration::from_secs(3);
 const QUIET: Duration = Duration::from_millis(200);
 const DISCOVERY_WRITES: usize = 4;
+/// Discovery plus the availability read `Session` makes while opening.
+const OPEN_WRITES: usize = DISCOVERY_WRITES + 1;
 
 const CONFIG: WorkerConfig = WorkerConfig {
     reconnect: Duration::from_millis(20),
@@ -66,6 +68,8 @@ struct State {
     inbox: VecDeque<[u8; FRAME_LEN]>,
     writes: Vec<Message>,
     failed: bool,
+    write_error: Option<DeviceError>,
+    fail_after_open: bool,
 }
 
 /// A device that answers requests from a table instead of a fixed script, so
@@ -114,6 +118,8 @@ impl FakeDevice {
                 inbox: VecDeque::new(),
                 writes: Vec::new(),
                 failed: false,
+                write_error: None,
+                fail_after_open: false,
             })),
         };
         device.answer(FeatureId::MIC_TEST, 6, Answer::Params(vec![5]));
@@ -176,6 +182,17 @@ impl FakeDevice {
         self.lock().failed = true;
     }
 
+    /// Writes fail with `error` while reads keep working.
+    fn fail_writes(&self, error: DeviceError) {
+        self.lock().write_error = Some(error);
+    }
+
+    /// Opening succeeds, then the device is gone: the session dies during
+    /// the snapshot read.
+    fn fail_after_open(&self) {
+        self.lock().fail_after_open = true;
+    }
+
     /// Requests written to the device so far, discovery included.
     fn written(&self) -> Vec<Message> {
         self.lock().writes.clone()
@@ -219,6 +236,12 @@ impl Transport for FakeDevice {
     fn write(&mut self, frame: &[u8; FRAME_LEN]) -> Result<(), DeviceError> {
         let mut state = self.lock();
         if state.failed {
+            return Err(DeviceError::Disconnected);
+        }
+        if let Some(error) = state.write_error.clone() {
+            return Err(error);
+        }
+        if state.fail_after_open && state.writes.len() >= OPEN_WRITES {
             return Err(DeviceError::Disconnected);
         }
         let Ok(Decoded::Reply { msg, .. }) = decode(A50X_PREFIX, frame) else {
@@ -721,4 +744,177 @@ fn dropping_the_command_sender_ends_the_thread() {
     drop(commands);
 
     handle.join().expect("the worker thread ended cleanly");
+}
+
+#[test]
+fn a_failed_refresh_read_clears_the_value() {
+    let device = FakeDevice::new();
+    device.answer(FeatureId::MIC_TEST, 6, Answer::Params(vec![0]));
+    let harness = Harness::start(vec![device.clone()]);
+    assert_eq!(harness.connected().sidetone, Some(Sidetone(3)));
+
+    device.push_event(FeatureId::MIC_TEST, &[5]);
+    assert_eq!(
+        harness.next(),
+        DeviceUpdate::Event(Event::HeadsetAvailability(false))
+    );
+    device.answer(FeatureId::HEADSET_SIDETONE, 0, Answer::Silent);
+    device.push_event(FeatureId::MIC_TEST, &[0]);
+
+    assert_eq!(
+        harness.next(),
+        DeviceUpdate::Event(Event::HeadsetAvailability(true))
+    );
+    let DeviceUpdate::Refreshed(snapshot) = harness.next() else {
+        panic!("expected Refreshed after the availability event");
+    };
+    assert_eq!(snapshot.sidetone, None);
+    assert_eq!(snapshot.balance, Some(GameVoiceBalance(6)));
+    harness.finish();
+}
+
+#[test]
+fn a_headset_that_reports_itself_away_is_marked_unavailable() {
+    let device = FakeDevice::new();
+    device.answer(FeatureId::MIC_TEST, 6, Answer::Params(vec![0]));
+    device.answer(FeatureId::BATTERY_SOC, 0, Answer::Error(8));
+    let harness = Harness::start(vec![device]);
+
+    let snapshot = harness.connected();
+
+    assert_eq!(snapshot.headset_available, Some(false));
+    assert_eq!(snapshot.battery, None);
+    harness.finish();
+}
+
+#[test]
+fn a_session_that_dies_while_reading_does_not_spin() {
+    let opens = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&opens);
+    let (commands, command_rx) = unbounded();
+    let (update_tx, updates) = unbounded();
+    let started = Instant::now();
+    let handle = spawn(
+        move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            let device = FakeDevice::new();
+            device.fail_after_open();
+            session_on(&device)
+        },
+        || Ok(false),
+        CONFIG,
+        command_rx,
+        update_tx,
+    );
+
+    assert!(matches!(
+        updates.recv_timeout(WAIT),
+        Ok(DeviceUpdate::Closed(Connection::Error { .. }))
+    ));
+    thread::sleep(Duration::from_millis(300));
+    let elapsed = started.elapsed();
+    let attempts = opens.load(Ordering::SeqCst);
+    let ticks = elapsed.as_millis() / CONFIG.reconnect.as_millis();
+    assert!(
+        attempts as u128 <= ticks + 1,
+        "{attempts} opens in {elapsed:?}"
+    );
+    assert_eq!(
+        updates.recv_timeout(Duration::from_millis(1)),
+        Err(crossbeam_channel::RecvTimeoutError::Timeout)
+    );
+
+    let shutdown_at = Instant::now();
+    commands.send(DeviceCommand::Shutdown).unwrap();
+    let (done_tx, done) = unbounded();
+    thread::spawn(move || done_tx.send(handle.join().is_ok()));
+    assert_eq!(done.recv_timeout(WAIT), Ok(true));
+    assert!(shutdown_at.elapsed() < Duration::from_secs(1));
+}
+
+fn fatal_write_ends_the_session(error: DeviceError) {
+    let device = FakeDevice::new();
+    let harness = Harness::start(vec![device.clone()]);
+    harness.connected();
+    device.fail_writes(error.clone());
+
+    harness
+        .commands
+        .send(DeviceCommand::Write {
+            id: 6,
+            writes: vec![DeviceWrite::Sidetone(Sidetone(2))],
+        })
+        .unwrap();
+
+    assert_eq!(
+        harness.next(),
+        DeviceUpdate::WriteDone {
+            id: 6,
+            result: Err(error)
+        }
+    );
+    assert!(matches!(
+        harness.next(),
+        DeviceUpdate::Closed(Connection::Error { .. })
+    ));
+    harness.finish();
+}
+
+#[test]
+fn an_io_error_on_write_drops_the_session() {
+    fatal_write_ends_the_session(DeviceError::Io("write failed".into()));
+}
+
+#[test]
+fn a_disconnect_on_write_drops_the_session() {
+    fatal_write_ends_the_session(DeviceError::Disconnected);
+}
+
+#[test]
+fn only_successful_writes_reach_the_worker_snapshot() {
+    let device = FakeDevice::new();
+    device.answer(FeatureId::LED_BRIGHTNESS, 1, Answer::Params(vec![]));
+    let harness = Harness::start(vec![device.clone()]);
+    assert_eq!(harness.connected().led_brightness, Some(100));
+
+    harness
+        .commands
+        .send(DeviceCommand::Write {
+            id: 1,
+            writes: vec![DeviceWrite::LedBrightness(40)],
+        })
+        .unwrap();
+    assert_eq!(
+        harness.next(),
+        DeviceUpdate::WriteDone {
+            id: 1,
+            result: Ok(())
+        }
+    );
+    device.answer(FeatureId::LED_BRIGHTNESS, 1, Answer::Error(5));
+    harness
+        .commands
+        .send(DeviceCommand::Write {
+            id: 2,
+            writes: vec![DeviceWrite::LedBrightness(30)],
+        })
+        .unwrap();
+    assert!(matches!(
+        harness.next(),
+        DeviceUpdate::WriteDone {
+            id: 2,
+            result: Err(DeviceError::Rejected { .. })
+        }
+    ));
+
+    device.push_event(FeatureId::MIC_TEST, &[0]);
+    assert_eq!(
+        harness.next(),
+        DeviceUpdate::Event(Event::HeadsetAvailability(true))
+    );
+    let DeviceUpdate::Refreshed(snapshot) = harness.next() else {
+        panic!("expected Refreshed after the availability event");
+    };
+    assert_eq!(snapshot.led_brightness, Some(40));
+    harness.finish();
 }

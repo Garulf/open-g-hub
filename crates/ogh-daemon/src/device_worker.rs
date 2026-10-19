@@ -110,7 +110,7 @@ where
             match self.serve(session) {
                 Exit::Stop => return,
                 Exit::Closed(error) => {
-                    if !self.report_closed(error) {
+                    if !self.report_closed(error) || !self.wait_for_reconnect_tick() {
                         return;
                     }
                 }
@@ -342,10 +342,24 @@ fn read_field<V>(
     build: impl FnOnce(u8) -> Message,
     parse: impl FnOnce(&[u8]) -> Result<V, ParseError>,
 ) -> Result<Option<V>, DeviceError> {
+    read_field_noting_away(session, &mut false, feature, build, parse)
+}
+
+/// Like `read_field`, and sets `away` when the headset reports it is gone.
+fn read_field_noting_away<V>(
+    session: &mut Session<impl Transport>,
+    away: &mut bool,
+    feature: FeatureId,
+    build: impl FnOnce(u8) -> Message,
+    parse: impl FnOnce(&[u8]) -> Result<V, ParseError>,
+) -> Result<Option<V>, DeviceError> {
     match session.call(feature, build) {
         Ok(params) => Ok(parse(&params).ok()),
         Err(error) if ends_session(&error) => Err(error),
-        Err(_) => Ok(None),
+        Err(error) => {
+            *away |= error == DeviceError::HeadsetDisconnected;
+            Ok(None)
+        }
     }
 }
 
@@ -415,8 +429,8 @@ fn read_eq(
 }
 
 /// Battery, sidetone, balance and noise gate are answered by the headset, so
-/// they run on the short timeout. A value that cannot be read keeps what the
-/// snapshot already held.
+/// they run on the short timeout. A read that fails leaves `None`, never the
+/// value from before.
 fn read_headset_side(
     session: &mut Session<impl Transport>,
     snapshot: &mut DeviceSnapshot,
@@ -433,33 +447,37 @@ fn read_headset_fields(
     session: &mut Session<impl Transport>,
     snapshot: &mut DeviceSnapshot,
 ) -> Result<(), DeviceError> {
-    let battery = read_field(
+    let mut away = false;
+    snapshot.battery = read_field_noting_away(
         session,
+        &mut away,
         FeatureId::BATTERY_SOC,
         battery::get_request,
         battery::parse,
     )?;
-    let sidetone = read_field(
+    snapshot.sidetone = read_field_noting_away(
         session,
+        &mut away,
         FeatureId::HEADSET_SIDETONE,
         sidetone::get_request,
         sidetone::parse_level,
     )?;
-    let balance = read_field(
+    snapshot.balance = read_field_noting_away(
         session,
+        &mut away,
         FeatureId::HEADSET_MIX,
         headset_mix::get_request,
         headset_mix::parse_balance,
     )?;
-    let noise_gate = read_field(
+    snapshot.noise_gate = read_field_noting_away(
         session,
+        &mut away,
         FeatureId::MIXER_MIC,
         noise_gate::current_request,
         noise_gate::parse_current,
     )?;
-    snapshot.battery = battery.or(snapshot.battery);
-    snapshot.sidetone = sidetone.or(snapshot.sidetone);
-    snapshot.balance = balance.or(snapshot.balance);
-    snapshot.noise_gate = noise_gate.or(snapshot.noise_gate);
+    if away {
+        snapshot.headset_available = Some(false);
+    }
     Ok(())
 }
