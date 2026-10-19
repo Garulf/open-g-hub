@@ -14,12 +14,15 @@ path = "src/main.rs"
 
 [dependencies]
 crossbeam-channel = "0.5"
+ctrlc = { version = "3.5.2", features = ["termination"] }
 directories = "6"
 ogh-device = { path = "../ogh-device" }
 ogh-ipc = { path = "../ogh-ipc" }
 ogh-protocol = { path = "../ogh-protocol" }
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 ogh-device = { path = "../ogh-device", features = ["testing"] }

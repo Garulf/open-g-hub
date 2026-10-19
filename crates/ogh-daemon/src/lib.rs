@@ -2,5 +2,98 @@ pub mod config;
 pub mod controller;
 pub mod convert;
 pub mod device_worker;
+pub mod ipc_server;
+pub mod logging;
 pub mod paths;
 pub mod snapshot;
+
+use std::path::Path;
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
+
+use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
+use ogh_device::{Session, guard};
+use ogh_ipc::{Endpoint, Server};
+
+use crate::config::Store;
+use crate::controller::{Controller, Input};
+use crate::device_worker::{DeviceCommand, DeviceUpdate, WorkerConfig};
+use crate::paths::Paths;
+
+const WORKER_STOP_WAIT: Duration = Duration::from_secs(2);
+
+/// Runs until Ctrl-C or SIGTERM, then exits the process with status 0.
+pub fn run(paths: Paths) -> Result<(), String> {
+    let endpoint = Endpoint::for_current_user().map_err(|e| e.to_string())?;
+    let server = Server::bind(&endpoint).map_err(|e| e.to_string())?;
+    let (stop_tx, stop) = bounded(1);
+    ctrlc::set_handler(move || {
+        let _ = stop_tx.try_send(());
+    })
+    .map_err(|e| format!("cannot install the signal handler: {e}"))?;
+
+    let store = Store::open(&paths.config_file);
+    let (commands, command_rx) = unbounded();
+    let (updates, update_rx) = unbounded();
+    let (inputs, input_rx) = unbounded();
+    let worker = device_worker::spawn(
+        Session::open,
+        guard::ghub_agent_running,
+        WorkerConfig::default(),
+        command_rx,
+        updates,
+    );
+    bridge_device_updates(update_rx, inputs.clone());
+    let controller = Controller::new(store, commands.clone(), Instant::now);
+    thread::spawn(move || controller.run(input_rx));
+    ipc_server::serve(server, inputs.clone());
+    let _ = inputs.send(Input::FocusUnavailable(
+        "focus detection is not wired yet".to_string(),
+    ));
+    tracing::info!(
+        "ogh-daemon {} listening on {endpoint:?}",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    let _ = stop.recv();
+    shut_down(&commands, worker, &endpoint)
+}
+
+fn bridge_device_updates(updates: Receiver<DeviceUpdate>, inputs: Sender<Input>) {
+    thread::spawn(move || {
+        for update in updates {
+            if inputs.send(Input::Device(update)).is_err() {
+                return;
+            }
+        }
+    });
+}
+
+fn shut_down(commands: &Sender<DeviceCommand>, worker: JoinHandle<()>, endpoint: &Endpoint) -> ! {
+    tracing::info!("shutting down");
+    let _ = commands.send(DeviceCommand::Shutdown);
+    let (stopped_tx, stopped) = bounded(1);
+    thread::spawn(move || {
+        let _ = worker.join();
+        let _ = stopped_tx.send(());
+    });
+    if stopped.recv_timeout(WORKER_STOP_WAIT).is_err() {
+        tracing::warn!("the device worker did not stop within {WORKER_STOP_WAIT:?}");
+    }
+    remove_socket(endpoint);
+    std::process::exit(0)
+}
+
+fn remove_socket(endpoint: &Endpoint) {
+    if let Endpoint::Path(path) = endpoint {
+        remove_file_if_present(path);
+    }
+}
+
+fn remove_file_if_present(path: &Path) {
+    if let Err(e) = std::fs::remove_file(path)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!("cannot remove {}: {e}", path.display());
+    }
+}
