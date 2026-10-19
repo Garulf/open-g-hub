@@ -93,17 +93,19 @@ impl Endpoint {
 
 pub struct Server {
     listener: Listener,
+    _guard: platform::Guard,
 }
 
 impl Server {
     pub fn bind(endpoint: &Endpoint) -> Result<Server, TransportError> {
-        platform::prepare(endpoint)?;
-        let listener = ListenerOptions::new()
-            .name(endpoint.name()?)
+        let guard = platform::prepare(endpoint)?;
+        let listener = platform::listener_options(ListenerOptions::new().name(endpoint.name()?))
             .create_sync()
             .map_err(platform::bind_error)?;
-        platform::secure(endpoint)?;
-        Ok(Server { listener })
+        Ok(Server {
+            listener,
+            _guard: guard,
+        })
     }
 
     pub fn accept(&self) -> Result<Connection, TransportError> {
@@ -233,31 +235,38 @@ fn connect_error(e: io::Error) -> TransportError {
 
 #[cfg(unix)]
 mod platform {
-    use std::fs::{self, DirBuilder, Permissions};
+    use std::fs::{self, DirBuilder, File, OpenOptions, TryLockError};
     use std::io;
-    use std::os::unix::fs::{DirBuilderExt, FileTypeExt, PermissionsExt};
+    use std::os::unix::fs::{DirBuilderExt, FileTypeExt, OpenOptionsExt, PermissionsExt};
     use std::path::Path;
 
-    use interprocess::local_socket::Stream;
     use interprocess::local_socket::traits::Stream as _;
+    use interprocess::local_socket::{ListenerOptions, Stream};
+    use interprocess::os::unix::local_socket::ListenerOptionsExt;
 
     use super::{Endpoint, TransportError, connect_error};
 
-    pub(super) fn prepare(endpoint: &Endpoint) -> Result<(), TransportError> {
+    const PRIVATE_DIR_NAME: &str = "open-g-hub";
+
+    pub(super) type Guard = Option<File>;
+
+    pub(super) fn prepare(endpoint: &Endpoint) -> Result<Guard, TransportError> {
         let Endpoint::Path(path) = endpoint else {
-            return Ok(());
+            return Ok(None);
         };
-        if let Some(dir) = path.parent() {
-            private_dir(dir)?;
-        }
-        clear_stale_socket(endpoint, path)
+        let guard = match path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            Some(dir) => {
+                private_dir(dir)?;
+                Some(lock_dir(dir)?)
+            }
+            None => None,
+        };
+        clear_stale_socket(endpoint, path)?;
+        Ok(guard)
     }
 
-    pub(super) fn secure(endpoint: &Endpoint) -> Result<(), TransportError> {
-        if let Endpoint::Path(path) = endpoint {
-            fs::set_permissions(path, Permissions::from_mode(0o600))?;
-        }
-        Ok(())
+    pub(super) fn listener_options(options: ListenerOptions<'_>) -> ListenerOptions<'_> {
+        options.mode(0o600)
     }
 
     pub(super) fn bind_error(e: io::Error) -> TransportError {
@@ -267,16 +276,40 @@ mod platform {
         }
     }
 
+    /// Only a directory we create, or an existing `open-g-hub` directory, is made private; any
+    /// other parent (for example `/tmp` for a custom socket path) keeps its mode.
     fn private_dir(dir: &Path) -> io::Result<()> {
         match fs::metadata(dir) {
-            Ok(meta) if meta.permissions().mode() & 0o077 != 0 => {
-                fs::set_permissions(dir, Permissions::from_mode(0o700))
+            Ok(meta) if !meta.is_dir() => Err(io::Error::other(format!(
+                "{} is not a directory",
+                dir.display()
+            ))),
+            Ok(meta) => {
+                let ours = dir.file_name().is_some_and(|name| name == PRIVATE_DIR_NAME);
+                if ours && meta.permissions().mode() & 0o077 != 0 {
+                    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+                }
+                Ok(())
             }
-            Ok(_) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 DirBuilder::new().recursive(true).mode(0o700).create(dir)
             }
             Err(e) => Err(e),
+        }
+    }
+
+    /// The lock file is never deleted: removing it would let a second daemon lock a new inode.
+    fn lock_dir(dir: &Path) -> Result<File, TransportError> {
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .mode(0o600)
+            .open(dir.join("daemon.lock"))?;
+        match file.try_lock() {
+            Ok(()) => Ok(file),
+            Err(TryLockError::WouldBlock) => Err(TransportError::AlreadyRunning),
+            Err(TryLockError::Error(e)) => Err(e.into()),
         }
     }
 
@@ -294,7 +327,10 @@ mod platform {
         }
         match Stream::connect(endpoint.name()?).map_err(connect_error) {
             Ok(_) => Err(TransportError::AlreadyRunning),
-            Err(TransportError::DaemonNotRunning) => Ok(fs::remove_file(path)?),
+            Err(TransportError::DaemonNotRunning) => match fs::remove_file(path) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e.into()),
+                _ => Ok(()),
+            },
             Err(e) => Err(e),
         }
     }
@@ -304,14 +340,18 @@ mod platform {
 mod platform {
     use std::io;
 
+    use interprocess::local_socket::ListenerOptions;
+
     use super::{Endpoint, TransportError};
 
-    pub(super) fn prepare(_endpoint: &Endpoint) -> Result<(), TransportError> {
-        Ok(())
+    pub(super) struct Guard;
+
+    pub(super) fn prepare(_endpoint: &Endpoint) -> Result<Guard, TransportError> {
+        Ok(Guard)
     }
 
-    pub(super) fn secure(_endpoint: &Endpoint) -> Result<(), TransportError> {
-        Ok(())
+    pub(super) fn listener_options(options: ListenerOptions<'_>) -> ListenerOptions<'_> {
+        options
     }
 
     /// The first pipe instance is created exclusively, so a live server makes the second

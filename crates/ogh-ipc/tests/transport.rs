@@ -152,11 +152,46 @@ fn socket_dir_is_private() {
 }
 
 #[test]
-fn wide_existing_dir_is_tightened() {
+fn wide_existing_open_g_hub_dir_is_tightened() {
     let dir = TestDir::new("wide");
+    let sub = dir.0.join("open-g-hub");
+    fs::create_dir(&sub).unwrap();
+    fs::set_permissions(&sub, fs::Permissions::from_mode(0o755)).unwrap();
+    let _server = Server::bind(&Endpoint::Path(sub.join("d.sock"))).unwrap();
+    assert_eq!(mode(&sub), 0o700);
+}
+
+#[test]
+fn other_existing_dirs_keep_their_mode() {
+    let dir = TestDir::new("shared");
     fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o755)).unwrap();
     let _server = Server::bind(&Endpoint::Path(dir.socket())).unwrap();
-    assert_eq!(mode(&dir.0), 0o700);
+    assert_eq!(mode(&dir.0), 0o755);
+}
+
+#[test]
+fn parent_that_is_a_file_is_an_io_error() {
+    let dir = TestDir::new("notdir");
+    let parent = dir.0.join("file");
+    fs::write(&parent, b"x").unwrap();
+    assert!(matches!(
+        Server::bind(&Endpoint::Path(parent.join("d.sock"))),
+        Err(TransportError::Io(_))
+    ));
+}
+
+#[test]
+fn lock_decides_even_when_the_socket_file_is_gone() {
+    let dir = TestDir::new("lock");
+    let endpoint = Endpoint::Path(dir.socket());
+    let first = Server::bind(&endpoint).unwrap();
+    fs::remove_file(dir.socket()).unwrap();
+    assert!(matches!(
+        Server::bind(&endpoint),
+        Err(TransportError::AlreadyRunning)
+    ));
+    drop(first);
+    let _again = Server::bind(&endpoint).unwrap();
 }
 
 fn mode(path: &Path) -> u32 {
