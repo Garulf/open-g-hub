@@ -3,8 +3,9 @@
 pub mod discovery;
 mod error;
 mod feature_id;
+pub mod features;
 mod frame;
 
-pub use error::{CentppError, FrameError, ParseError};
+pub use error::{CentppError, FrameError, ParseError, RangeError};
 pub use feature_id::FeatureId;
-pub use frame::{A50X_PREFIX, Decoded, FRAME_LEN, GHUB_SW_ID, Message, decode, encode};
+pub use frame::{A50X_PREFIX, Decoded, FRAME_LEN, GHUB_SW_ID, Message, decode, encode, request};

@@ -34,8 +34,13 @@ struct RawTransfer {
 }
 
 pub fn load(name: &str) -> Vec<Transfer> {
+    load_session("session-a", name)
+}
+
+pub fn load_session(session: &str, name: &str) -> Vec<Transfer> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/session-a")
+        .join("../../fixtures")
+        .join(session)
         .join(format!("{name}.jsonl"));
     let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     text.lines()

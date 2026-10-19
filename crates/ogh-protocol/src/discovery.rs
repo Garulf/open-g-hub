@@ -1,6 +1,6 @@
-use crate::error::ParseError;
+use crate::error::{ParseError, require_len};
 use crate::feature_id::FeatureId;
-use crate::frame::{GHUB_SW_ID, Message};
+use crate::frame::{Message, request};
 
 const ROOT_INDEX: u8 = 0;
 const ROOT_GET_FEATURE: u8 = 0;
@@ -24,27 +24,8 @@ pub struct Ping {
     pub echo: u8,
 }
 
-fn request(feature_index: u8, function: u8, params: Vec<u8>) -> Message {
-    Message {
-        feature_index,
-        function,
-        sw_id: GHUB_SW_ID,
-        params,
-    }
-}
-
-fn require_len(params: &[u8], expected: usize) -> Result<(), ParseError> {
-    if params.len() < expected {
-        return Err(ParseError::TooShort {
-            expected,
-            actual: params.len(),
-        });
-    }
-    Ok(())
-}
-
 pub fn ping_request(data: u8) -> Message {
-    request(ROOT_INDEX, ROOT_PING, vec![data, 0, 0])
+    request(ROOT_INDEX, ROOT_PING, &[data, 0, 0])
 }
 
 /// `major` and `minor` are a guessed reading of the two constant reply bytes.
@@ -58,7 +39,7 @@ pub fn parse_ping(params: &[u8]) -> Result<Ping, ParseError> {
 }
 
 pub fn get_feature_request(id: FeatureId) -> Message {
-    request(ROOT_INDEX, ROOT_GET_FEATURE, id.0.to_be_bytes().to_vec())
+    request(ROOT_INDEX, ROOT_GET_FEATURE, &id.0.to_be_bytes())
 }
 
 /// Index 0 for any id other than Root is read as "absent". That follows
@@ -78,7 +59,7 @@ pub fn parse_get_feature(id: FeatureId, params: &[u8]) -> Result<Option<FeatureI
 }
 
 pub fn get_count_request(feature_set_index: u8) -> Message {
-    request(feature_set_index, FEATURE_SET_GET_COUNT, Vec::new())
+    request(feature_set_index, FEATURE_SET_GET_COUNT, &[])
 }
 
 /// The count includes Root, so valid indices are `0..count`.
@@ -88,7 +69,7 @@ pub fn parse_count(params: &[u8]) -> Result<u8, ParseError> {
 }
 
 pub fn list_features_request(feature_set_index: u8, start: u8) -> Message {
-    request(feature_set_index, FEATURE_SET_LIST, vec![start])
+    request(feature_set_index, FEATURE_SET_LIST, &[start])
 }
 
 pub fn parse_feature_page(start: u8, params: &[u8]) -> Result<Vec<FeatureInfo>, ParseError> {

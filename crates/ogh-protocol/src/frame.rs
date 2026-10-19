@@ -41,6 +41,16 @@ pub enum Decoded {
     },
 }
 
+/// A request as G Hub sends it: its software id, so replies can be matched.
+pub fn request(feature_index: u8, function: u8, params: &[u8]) -> Message {
+    Message {
+        feature_index,
+        function,
+        sw_id: GHUB_SW_ID,
+        params: params.to_vec(),
+    }
+}
+
 fn max_params(prefix: &[u8]) -> usize {
     FRAME_LEN - prefix.len() - 1 - MESSAGE_HEADER_LEN
 }

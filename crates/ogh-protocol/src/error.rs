@@ -31,6 +31,8 @@ impl std::error::Error for FrameError {}
 pub enum ParseError {
     TooShort { expected: usize, actual: usize },
     IndexOverflow,
+    InvalidUtf8,
+    UnknownValue(u8),
 }
 
 impl fmt::Display for ParseError {
@@ -43,11 +45,42 @@ impl fmt::Display for ParseError {
                 )
             }
             Self::IndexOverflow => write!(f, "feature page runs past index 255"),
+            Self::InvalidUtf8 => write!(f, "text field is not valid UTF-8"),
+            Self::UnknownValue(value) => write!(f, "unknown value {value:#04x}"),
         }
     }
 }
 
 impl std::error::Error for ParseError {}
+
+pub(crate) fn require_len(params: &[u8], expected: usize) -> Result<(), ParseError> {
+    if params.len() < expected {
+        return Err(ParseError::TooShort {
+            expected,
+            actual: params.len(),
+        });
+    }
+    Ok(())
+}
+
+/// A value above the range the device accepts, caught before anything is sent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RangeError {
+    pub value: u8,
+    pub max: u8,
+}
+
+impl fmt::Display for RangeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "value {} is above the maximum of {}",
+            self.value, self.max
+        )
+    }
+}
+
+impl std::error::Error for RangeError {}
 
 /// Error codes named in the G Hub agent, in the agent's order. The numeric
 /// values are assumed to be the position in that list; no error frame was
