@@ -1,0 +1,253 @@
+# Calls open-g-hub may send: each (feature id, function) G Hub was seen
+# sending, citing the fixture that shows it. Deny entries win and cannot
+# overlap an allow entry; a deny entry without a function covers the feature.
+
+# Root getFeature
+[[allow]]
+feature = 0x0000
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# Root ping
+[[allow]]
+feature = 0x0000
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# FeatureSet getCount
+[[allow]]
+feature = 0x0001
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# FeatureSet paged list
+[[allow]]
+feature = 0x0001
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# DeviceInfo getHardwareInfo
+[[allow]]
+feature = 0x0100
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# DeviceInfo getFirmwareVersion
+[[allow]]
+feature = 0x0100
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# DeviceName getName
+[[allow]]
+feature = 0x0101
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# DeviceName getDefaultName
+[[allow]]
+feature = 0x0101
+function = 2
+seen_in = "session-a/ghub-launch"
+
+# DeviceName getMaxLength
+[[allow]]
+feature = 0x0101
+function = 3
+seen_in = "session-a/ghub-launch"
+
+# BatterySOC status
+[[allow]]
+feature = 0x0104
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# AutoSleep read
+[[allow]]
+feature = 0x0108
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# iVolumeSet read
+[[allow]]
+feature = 0x0200
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# iVolumeSet read
+[[allow]]
+feature = 0x0200
+function = 3
+seen_in = "session-a/ghub-launch"
+
+# Sidetone get level
+[[allow]]
+feature = 0x0604
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# Sidetone set level
+[[allow]]
+feature = 0x0604
+function = 1
+seen_in = "session-b/sidetone"
+
+# Sidetone get info
+[[allow]]
+feature = 0x0604
+function = 2
+seen_in = "session-a/ghub-launch"
+
+# HeadsetMix get balance
+[[allow]]
+feature = 0x0609
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# HeadsetMix set balance
+[[allow]]
+feature = 0x0609
+function = 1
+seen_in = "session-b/balance"
+
+# HeadsetMix get info
+[[allow]]
+feature = 0x0609
+function = 2
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 2
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 3
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 4
+seen_in = "session-a/ghub-launch"
+
+# iMixerAudio read
+[[allow]]
+feature = 0x0800
+function = 5
+seen_in = "session-a/ghub-launch"
+
+# AdvancedParaEQ get infos
+[[allow]]
+feature = 0x020D
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# AdvancedParaEQ get custom EQ
+[[allow]]
+feature = 0x020D
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# AdvancedParaEQ set custom EQ
+[[allow]]
+feature = 0x020D
+function = 2
+seen_in = "session-a/ghub-launch"
+
+# AdvancedParaEQ get active EQ
+[[allow]]
+feature = 0x020D
+function = 3
+seen_in = "session-a/ghub-launch"
+
+# AdvancedParaEQ get preset
+[[allow]]
+feature = 0x020D
+function = 5
+seen_in = "session-a/ghub-launch"
+
+# BtHostInfo connected device count
+[[allow]]
+feature = 0x0305
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# LED brightness read
+[[allow]]
+feature = 0x0110
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# HeadsetTones read
+[[allow]]
+feature = 0x060B
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# MicTest getState
+[[allow]]
+feature = 0x020E
+function = 6
+seen_in = "session-a/ghub-launch"
+
+# MixerMic get info
+[[allow]]
+feature = 0x0801
+function = 0
+seen_in = "session-a/ghub-launch"
+
+# MixerMic get noise gate
+[[allow]]
+feature = 0x0801
+function = 1
+seen_in = "session-a/ghub-launch"
+
+# MixerMic get noise gate options
+[[allow]]
+feature = 0x0801
+function = 3
+seen_in = "session-a/ghub-launch"
+
+[[deny]]
+feature = 0x010A
+reason = "GenericDFU: firmware update path, never touched even for reads"
+
+[[deny]]
+feature = 0x0103
+reason = "Memfault: drains diagnostic data held for Logitech"
+
+[[deny]]
+feature = 0x0305
+function = 1
+reason = "BtHostInfo connected device address: personal data (paired phone)"
+
+[[deny]]
+feature = 0x0305
+function = 2
+reason = "BtHostInfo connected device name: personal data (paired phone)"
+
+[[deny]]
+feature = 0x0100
+function = 2
+reason = "DeviceInfo serial number: personal data"
+
+[[deny]]
+feature = 0x0100
+function = 4
+reason = "DeviceInfo factory reset: wipes the device"
