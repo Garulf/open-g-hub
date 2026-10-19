@@ -1,3 +1,4 @@
+use eframe::egui::Pos2;
 use eframe::egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -65,15 +66,23 @@ fn disabled(harness: &Harness<'_, Window>, label: &str, index: usize) -> bool {
         .is_disabled()
 }
 
+fn same_line(harness: &Harness<'_, Window>, tag: &str, name: &str) -> bool {
+    let tag = harness.get_by_label(tag).rect().center().y;
+    let name = harness.get_by_label(name).rect().center().y;
+    (tag - name).abs() < 1.0
+}
+
 #[test]
 fn profiles_are_listed_with_tags() {
     let harness = started(Connection::Connected);
 
-    harness.get_by_label("Default");
-    harness.get_by_label("Gaming");
     harness.get_by_label("firefox");
     assert_eq!(harness.get_all_by_label("default").count(), 1);
     assert_eq!(harness.get_all_by_label("active").count(), 1);
+    assert!(same_line(&harness, "default", "Default"));
+    assert!(!same_line(&harness, "default", "Gaming"));
+    assert!(same_line(&harness, "active", "Gaming"));
+    assert!(!same_line(&harness, "active", "Default"));
 }
 
 #[test]
@@ -157,6 +166,25 @@ fn clicking_another_control_disarms_delete() {
 
     assert!(harness.query_by_label("Really delete?").is_none());
     assert_eq!(harness.get_all_by_label("Delete").count(), 2);
+}
+
+#[test]
+fn clicking_blank_space_disarms_delete() {
+    let mut harness = started(Connection::Connected);
+    click_nth(&mut harness, "Delete", 1);
+    harness.get_by_label("Really delete?");
+
+    let blank = Pos2::new(800.0, 540.0);
+    harness.hover_at(blank);
+    harness.drag_at(blank);
+    harness.run();
+    harness.drop_at(blank);
+    harness.run();
+
+    assert_eq!(harness.get_all_by_label("Delete").count(), 2);
+    click_nth(&mut harness, "Delete", 1);
+    assert!(harness.state().sent.is_empty());
+    harness.get_by_label("Really delete?");
 }
 
 #[test]

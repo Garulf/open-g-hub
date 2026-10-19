@@ -1,11 +1,11 @@
-use eframe::egui::{Button, DragValue, RadioButton, Response, Ui};
+use eframe::egui::{Button, DragValue, RadioButton, Ui};
 use ogh_ipc::{Eq, Gate, ProfileSettings, Request, Setting};
 use ogh_protocol::features::advanced_para_eq::{
     HEADPHONE_DEFAULT, HEADPHONE_MIN_FREQ_HZ, MAX_FREQ_HZ, MAX_GAIN_DB, MAX_Q, MIC_DEFAULT,
     MIC_MIN_FREQ_HZ, MIN_GAIN_DB, MIN_Q,
 };
 
-use super::{Level, LevelControl, NOT_READ_YET, Scale, set};
+use super::{Level, LevelControl, NOT_READ_YET, Scale, set, set_accessible_label};
 use crate::app::GuiState;
 use crate::describe::{frequency_label, gate_label};
 use crate::presets::{self, CURATED_Q, from_card};
@@ -258,7 +258,7 @@ fn band(
             .speed((f64::from(shown.freq_hz) / 100.0).max(1.0))
             .suffix(" Hz"),
     );
-    name(ui, &response, format!("Band {} frequency", index + 1));
+    set_accessible_label(ui, &response, format!("Band {} frequency", index + 1));
     if freq != freq_before {
         eq.bands[index].freq_hz = freq.clamp(low, high);
     }
@@ -275,7 +275,7 @@ fn band(
             .max_decimals(5)
             .prefix("Q "),
     );
-    name(ui, &response, format!("Band {} Q", index + 1));
+    set_accessible_label(ui, &response, format!("Band {} Q", index + 1));
     if q != q_before {
         eq.bands[index].q = Some(q.clamp(MIN_Q, MAX_Q));
     }
@@ -292,10 +292,4 @@ fn freq_bounds(eq: &Eq, index: usize, min_freq_hz: u16) -> (u16, u16) {
         None => MAX_FREQ_HZ,
     };
     (low, high.max(low))
-}
-
-fn name(ui: &Ui, response: &Response, label: String) {
-    ui.ctx().accesskit_node_builder(response.id, |node| {
-        node.set_label(label);
-    });
 }

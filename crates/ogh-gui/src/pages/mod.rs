@@ -3,7 +3,7 @@ pub mod eq;
 pub(crate) mod mixer;
 pub(crate) mod profiles;
 
-use eframe::egui::{self, Slider, Ui};
+use eframe::egui::{self, Response, Slider, Ui};
 use ogh_ipc::{Request, Setting};
 
 use crate::app::{GuiState, Page};
@@ -13,6 +13,13 @@ pub(crate) const NOT_READ_YET: &str = "not read yet";
 
 pub(crate) fn set(setting: Setting) -> Request {
     Request::Set { setting }
+}
+
+pub(crate) fn set_accessible_label(ui: &Ui, response: &Response, label: impl Into<String>) {
+    let label = label.into();
+    ui.ctx().accesskit_node_builder(response.id, |node| {
+        node.set_label(label);
+    });
 }
 
 pub(crate) fn show(ui: &mut Ui, state: &mut GuiState, requests: &mut Vec<Request>) {
