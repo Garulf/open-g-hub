@@ -141,7 +141,7 @@ The daemon keeps profiles, app links and the audio switch settings in `config.to
 | Windows | `%APPDATA%\open-g-hub\config\config.toml` |
 | Linux | `~/.config/open-g-hub/config.toml` |
 
-Its state and `daemon.log` sit next to it under the local data directory (`%LOCALAPPDATA%\open-g-hub\data` on Windows, `~/.local/share/open-g-hub` on Linux). Use the `ogh profile` commands to edit profiles and links. The audio switch names are the one thing you edit by hand. The daemon reads the file again before every change, so an edit takes effect at the next `ogh` command that changes something, such as `ogh autoswitch on`, or when the daemon restarts. A file that no longer parses is reported in `ogh status` and left as it is:
+Its state and `daemon.log` sit next to it under the local data directory (`%LOCALAPPDATA%\open-g-hub\data` on Windows, `~/.local/share/open-g-hub` on Linux). Use the `ogh profile` commands to edit profiles and links. The audio switch names are the one thing you edit by hand. The daemon reads the file again before every change, so an edit takes effect at the next `ogh` command that changes something, such as `ogh autoswitch on`, or when the daemon restarts. A file that no longer parses is reported in `ogh status` and left as it is. The daemon reads it again on the next `ogh` command once you have fixed it:
 
 ```toml
 [audio_switch]

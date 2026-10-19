@@ -1,13 +1,13 @@
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender, bounded, select, unbounded};
+use crossbeam_channel::{Receiver, Sender, bounded, select};
 use ogh_ipc::transport::{Connection, ConnectionWriter};
 use ogh_ipc::{
     CodecError, ErrorKind, Hello, IPC_VERSION, IpcError, Notification, Request, Response, Server,
 };
 
-use crate::controller::Input;
+use crate::controller::{Input, SUBSCRIBER_QUEUE};
 
 const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 
@@ -135,7 +135,7 @@ fn forward(connection: &mut Connection, inputs: &Sender<Input>, request: Request
 /// client goes away stops the forwarder, which drops the receiver and gets the controller to
 /// prune this subscriber on its next send.
 fn subscribe(mut connection: Connection, inputs: &Sender<Input>) {
-    let (notify, notifications) = unbounded();
+    let (notify, notifications) = bounded(SUBSCRIBER_QUEUE);
     if inputs.send(Input::Subscribe(notify)).is_err() {
         let _ = connection.send(&shutting_down());
         return;

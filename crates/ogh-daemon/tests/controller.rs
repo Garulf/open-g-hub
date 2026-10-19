@@ -3,10 +3,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
 use ogh_daemon::autoswitch::{AudioSwitchOutcome, Command};
 use ogh_daemon::config::{AudioSwitchConfig, Store};
-use ogh_daemon::controller::{Controller, FOCUS_SETTLE, Input};
+use ogh_daemon::controller::{Controller, FOCUS_SETTLE, Input, SUBSCRIBER_QUEUE};
 use ogh_daemon::convert::profile_settings;
 use ogh_daemon::device_worker::{DeviceCommand, DeviceUpdate};
 use ogh_daemon::snapshot::{DeviceSnapshot, DeviceWrite};
@@ -541,6 +541,43 @@ fn subscribers_get_status_on_change_and_dead_ones_are_dropped() {
     harness.update(DeviceUpdate::Closed(Connection::GhubRunning));
     let Notification::Status(closed) = live.recv_timeout(WAIT).unwrap();
     assert_eq!(closed.connection, Connection::GhubRunning);
+    harness.finish();
+}
+
+#[test]
+fn status_clears_config_error_after_the_file_is_fixed() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "default_profile = [").unwrap();
+    let harness = Harness::start_store(dir, Store::open(&path));
+    assert!(harness.status().config_error.is_some());
+
+    std::fs::write(&path, "default_profile = \"default\"\n").unwrap();
+    assert_eq!(harness.status().config_error, None);
+    harness.finish();
+}
+
+#[test]
+fn a_subscriber_that_stops_reading_is_dropped() {
+    let harness = Harness::start();
+    harness.connect(snapshot(0, NoiseGate::Off));
+    let (stalled_tx, stalled) = bounded(SUBSCRIBER_QUEUE);
+    harness.inputs.send(Input::Subscribe(stalled_tx)).unwrap();
+
+    for step in 0..=SUBSCRIBER_QUEUE as u8 {
+        harness.update(DeviceUpdate::Event(Event::Sidetone(Sidetone(1 + step % 2))));
+        harness.sync();
+    }
+
+    let mut received = 0;
+    loop {
+        match stalled.recv_timeout(WAIT) {
+            Ok(_) => received += 1,
+            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => panic!("the controller still holds the sender"),
+        }
+    }
+    assert!(received <= SUBSCRIBER_QUEUE, "{received} notifications");
     harness.finish();
 }
 

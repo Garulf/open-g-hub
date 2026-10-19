@@ -178,6 +178,16 @@ impl Store {
         }
     }
 
+    /// Re-reads the file only while it was unreadable, so a fixed
+    /// config.toml is picked up without waiting for a change request.
+    pub fn retry_if_unreadable(&mut self) -> bool {
+        if self.load_error.is_none() {
+            return false;
+        }
+        self.reload();
+        self.load_error.is_none()
+    }
+
     pub fn config(&self) -> Result<&Config, IpcError> {
         match &self.load_error {
             Some(message) => Err(error(ErrorKind::ConfigUnavailable, message.clone())),

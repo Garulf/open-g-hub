@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError};
 use ogh_device::{DeviceError, FeatureInfo};
 use ogh_ipc::{
     AutoSwitchStatus, Connection, ErrorKind, Feature, FocusStatus, Headset, Hello, IPC_VERSION,
@@ -18,6 +18,9 @@ use deferred::DeferredSave;
 
 mod default_capture;
 mod deferred;
+
+/// Notifications a subscriber may leave unread before it is dropped.
+pub const SUBSCRIBER_QUEUE: usize = 16;
 
 /// How long an app must keep focus before its profile applies.
 pub const FOCUS_SETTLE: Duration = Duration::from_millis(250);
@@ -173,7 +176,10 @@ impl Controller {
 
     fn handle(&mut self, input: Input) {
         match input {
-            Input::Ipc { request, reply } => self.handle_request(request, reply),
+            Input::Ipc { request, reply } => {
+                self.recover_config();
+                self.handle_request(request, reply);
+            }
             Input::Subscribe(subscriber) => self.subscribe(subscriber),
             Input::Device(update) => self.handle_device(update),
             Input::Focus(app) => {
@@ -216,8 +222,19 @@ impl Controller {
     }
 
     fn subscribe(&mut self, subscriber: Sender<Notification>) {
-        if subscriber.send(Notification::Status(self.status())).is_ok() {
+        if subscriber
+            .try_send(Notification::Status(self.status()))
+            .is_ok()
+        {
             self.subscribers.push(subscriber);
+        }
+    }
+
+    fn recover_config(&mut self) {
+        if self.store.retry_if_unreadable() {
+            self.configure_auto_switch();
+            self.refresh_active();
+            self.notify();
         }
     }
 
@@ -227,9 +244,14 @@ impl Controller {
             return;
         }
         self.subscribers.retain(|subscriber| {
-            subscriber
-                .send(Notification::Status(status.clone()))
-                .is_ok()
+            match subscriber.try_send(Notification::Status(status.clone())) {
+                Ok(()) => true,
+                Err(TrySendError::Full(_)) => {
+                    tracing::warn!("dropping a subscriber that stopped reading");
+                    false
+                }
+                Err(TrySendError::Disconnected(_)) => false,
+            }
         });
         self.last_status = Some(status);
     }
@@ -329,6 +351,7 @@ impl Controller {
     }
 
     fn settle_focus(&mut self, app: Option<String>) {
+        self.recover_config();
         if app == self.focused_app {
             return;
         }
