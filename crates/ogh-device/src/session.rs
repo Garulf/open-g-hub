@@ -43,13 +43,14 @@ const ROOT: FeatureInfo = FeatureInfo {
 /// flight at a time; frames that arrive while waiting for a reply and are
 /// not that reply go to the event queue or are dropped.
 ///
-/// Replies are matched on feature index, function and G Hub's fixed sw_id,
-/// so they carry no request identity. Input already waiting is drained
-/// before every write, which removes late replies to earlier requests that
-/// arrived in the meantime. A late reply that lands after that drain and
-/// before the real reply is still taken as the answer; only a per-request
-/// sw_id would close that window, and no sw_id other than 0xB has been seen
-/// on this device.
+/// Replies are matched on feature index, function and `GHUB_SW_ID`, the
+/// sw_id on every request, so a reply cannot be tied to one particular
+/// request. Before every write, up to 64 frames already waiting are drained:
+/// events are queued and everything else, late replies to earlier requests
+/// included, is dropped. A late reply still waiting past that bound, or one
+/// that lands after the drain and before the real reply, is taken as the
+/// answer. The device echoes whatever sw_id a request carries, so a
+/// per-request sw_id would close that window.
 pub struct Session<T: Transport> {
     transport: T,
     allowlist: &'static Allowlist,
@@ -241,7 +242,7 @@ impl<T: Transport> Session<T> {
     }
 
     /// The single gate every outgoing message passes. The message must
-    /// target the discovered index of `id` with G Hub's sw_id, (`id`,
+    /// target the discovered index of `id` with `GHUB_SW_ID`, (`id`,
     /// function) must be allowlisted, and its params must pass any parameter
     /// rule for that call. Nothing is written otherwise.
     fn send(&mut self, id: FeatureId, msg: Message) -> Result<Vec<u8>, DeviceError> {

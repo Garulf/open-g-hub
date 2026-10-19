@@ -5,7 +5,9 @@ pub const FRAME_LEN: usize = 64;
 /// Report id followed by the constant byte seen at offset 1 of every frame.
 pub const A50X_PREFIX: &[u8] = &[0x02, 0x0c];
 
-/// Software id G Hub puts on every request.
+/// Software id on every request we send. It is the one G Hub used on the
+/// first capture visit; G Hub picks a new one per run (0xD on the second
+/// visit), and the device echoes whatever a request carries.
 pub const GHUB_SW_ID: u8 = 0x0b;
 
 const FLAGS_SINGLE: u8 = 0x00;
