@@ -1,6 +1,7 @@
 use crate::error::{Allowed, ParseError, RangeError, require_len};
 use crate::frame::{Message, request};
 
+const GET_CUSTOM: u8 = 1;
 const SET_CUSTOM: u8 = 2;
 /// Slots 0 to 2 are read-only factory presets (getEQInfos); G Hub writes
 /// every preset pick and custom edit into slot 3.
@@ -10,7 +11,10 @@ const LEADING_BYTE: u8 = 0;
 pub const BAND_COUNT: usize = 10;
 const BAND_LEN: usize = 5;
 const HEADER_LEN: usize = 3;
-const CARD_LEN: usize = HEADER_LEN + BAND_COUNT * BAND_LEN;
+const BANDS_LEN: usize = BAND_COUNT * BAND_LEN;
+const CARD_LEN: usize = HEADER_LEN + BANDS_LEN;
+/// The fn1 reply is a leading byte, then the ten bands.
+const REPLY_LEN: usize = 1 + BANDS_LEN;
 
 pub const MIN_GAIN_DB: f32 = -6.0;
 pub const MAX_GAIN_DB: f32 = 6.0;
@@ -126,6 +130,11 @@ pub const MIC_COMPETITION: Equalizer = curated(
     [-3.0, -3.0, -1.5, 0.0, 0.0, 1.0, 1.5, 1.5, 1.5, 2.0],
 );
 
+/// fn1 getCustomEQ: `<instance> 03`, as G Hub reads the custom slot.
+pub fn get_custom_request(feature_index: u8, instance: EqInstance) -> Message {
+    request(feature_index, GET_CUSTOM, &[instance as u8, CUSTOM_SLOT])
+}
+
 /// fn2 setCustomEQ into the custom slot, the only call G Hub uses to change
 /// an EQ. The card takes the first band's mode: every band must then be
 /// graphic (`q: None`) or every band parametric, as in every captured card.
@@ -183,11 +192,23 @@ fn gain_raw(gain_db: f32) -> Result<u16, RangeError> {
 pub fn parse_custom_eq(params: &[u8]) -> Result<CustomEq, ParseError> {
     require_len(params, CARD_LEN)?;
     let instance = EqInstance::from_byte(params[0])?;
-    let mut bands = [PLACEHOLDER_BAND; BAND_COUNT];
-    for (band, raw) in bands
-        .iter_mut()
-        .zip(params[HEADER_LEN..CARD_LEN].as_chunks::<BAND_LEN>().0)
-    {
+    Ok(CustomEq {
+        instance,
+        slot: params[1],
+        leading: params[2],
+        equalizer: parse_bands(&params[HEADER_LEN..CARD_LEN]),
+    })
+}
+
+/// Parses a fn1 reply: a leading byte, then ten `<freq u16> <q> <gain u16>`.
+pub fn parse_custom_reply(params: &[u8]) -> Result<Equalizer, ParseError> {
+    require_len(params, REPLY_LEN)?;
+    Ok(parse_bands(&params[1..REPLY_LEN]))
+}
+
+fn parse_bands(bands: &[u8]) -> Equalizer {
+    let mut parsed = [PLACEHOLDER_BAND; BAND_COUNT];
+    for (band, raw) in parsed.iter_mut().zip(bands.as_chunks::<BAND_LEN>().0) {
         let gain_raw = u16::from_be_bytes([raw[3], raw[4]]);
         *band = EqBand {
             freq_hz: u16::from_be_bytes([raw[0], raw[1]]),
@@ -195,10 +216,5 @@ pub fn parse_custom_eq(params: &[u8]) -> Result<CustomEq, ParseError> {
             gain_db: (f32::from(gain_raw) - ZERO_DB_RAW) / GAIN_STEPS_PER_DB,
         };
     }
-    Ok(CustomEq {
-        instance,
-        slot: params[1],
-        leading: params[2],
-        equalizer: Equalizer { bands },
-    })
+    Equalizer { bands: parsed }
 }

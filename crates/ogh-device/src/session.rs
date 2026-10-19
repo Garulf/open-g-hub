@@ -7,8 +7,8 @@ use ogh_protocol::discovery::{
 };
 use ogh_protocol::features::{Event, mic_test, parse_event};
 use ogh_protocol::{
-    A50X_PREFIX, CentppError, Decoded, FRAME_LEN, GHUB_SW_ID, Message, ParseError, decode, encode,
-    request,
+    A50X_PREFIX, CentppError, Decoded, FRAME_LEN, GHUB_SW_ID, Message, ParseError, RangeError,
+    decode, encode, request,
 };
 
 use crate::allowlist::Allowlist;
@@ -118,6 +118,30 @@ impl<T: Transport> Session<T> {
     ) -> Result<Vec<u8>, DeviceError> {
         let index = self.index_of(id)?;
         self.send(id, build(index))
+    }
+
+    /// Like `call`, for builders that check their value: a `RangeError`
+    /// becomes `InvalidValue` and nothing is sent.
+    pub fn try_call(
+        &mut self,
+        id: FeatureId,
+        build: impl FnOnce(u8) -> Result<Message, RangeError>,
+    ) -> Result<Vec<u8>, DeviceError> {
+        let index = self.index_of(id)?;
+        let msg = build(index).map_err(|e| DeviceError::InvalidValue(e.to_string()))?;
+        self.send(id, msg)
+    }
+
+    /// Sends a read and parses its reply; a reply `parse` rejects becomes
+    /// the same error as an unparsable reply during discovery.
+    pub fn read<V>(
+        &mut self,
+        id: FeatureId,
+        build: impl FnOnce(u8) -> Message,
+        parse: impl FnOnce(&[u8]) -> Result<V, ParseError>,
+    ) -> Result<V, DeviceError> {
+        let params = self.call(id, build)?;
+        parse(&params).map_err(bad_reply)
     }
 
     pub fn request(

@@ -50,8 +50,18 @@ struct ParamRule {
 const RULES: &[ParamRule] = &[
     ParamRule {
         feature: FeatureId::ADVANCED_PARA_EQ,
+        function: 1,
+        accepts: get_custom_eq,
+    },
+    ParamRule {
+        feature: FeatureId::ADVANCED_PARA_EQ,
         function: 2,
         accepts: set_custom_eq,
+    },
+    ParamRule {
+        feature: FeatureId::MIXER_AUDIO,
+        function: 5,
+        accepts: get_mixer_settings,
     },
     ParamRule {
         feature: FeatureId::MIXER_AUDIO,
@@ -94,6 +104,19 @@ const RULES: &[ParamRule] = &[
         accepts: set_noise_gate,
     },
 ];
+
+/// `<instance> 03`: G Hub read only the custom slot of the two instances.
+fn get_custom_eq(params: &[u8]) -> bool {
+    matches!(
+        params,
+        [EQ_INSTANCE_MIC | EQ_INSTANCE_HEADPHONE, CUSTOM_EQ_SLOT]
+    )
+}
+
+/// `00`: the Stream Port output, the only one.
+fn get_mixer_settings(params: &[u8]) -> bool {
+    matches!(params, [MIXER_STREAM_OUTPUT])
+}
 
 /// `<instance> 03 00` then ten `<freq u16> <q> <gain u16>`; factory slots
 /// must never be written. Frequencies rise strictly, and the Q bytes are
