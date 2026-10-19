@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use common::{
-    LAUNCH, LAUNCH_OPEN_REPLIES, LAUNCH_OPEN_REQUESTS, discovered_ids, fixture_path, frame_at,
-    frame_from_hex, load, sent_calls,
+    LAUNCH, LAUNCH_OPEN_REPLIES, LAUNCH_OPEN_REQUESTS, all_fixtures, feature_ids, fixture_path,
+    frame_at, frame_from_hex, load, sent_calls,
 };
 use ogh_device::allowlist::Allowlist;
 use ogh_device::testing::{self, ScriptedTransport};
@@ -616,7 +616,6 @@ fn next_event_with_zero_timeout_reads_without_blocking() {
 #[test]
 fn allowlist_entries_are_observed_in_cited_fixtures() {
     let allowlist = Allowlist::embedded().expect("embedded allowlist parses");
-    let launch_ids = discovered_ids(&load(LAUNCH)).expect("launch capture has discovery");
     assert!(!allowlist.allowed().is_empty());
 
     let mut seen = HashSet::new();
@@ -627,10 +626,9 @@ fn allowlist_entries_are_observed_in_cited_fixtures() {
             entry.seen_in
         );
         let transfers = load(&entry.seen_in);
-        let ids = discovered_ids(&transfers).unwrap_or_else(|| launch_ids.clone());
         let call = (FeatureId(entry.feature), entry.function);
         assert!(
-            sent_calls(&transfers, &ids).contains(&call),
+            sent_calls(&transfers, &feature_ids(&transfers)).contains(&call),
             "{:#06x} fn{} never sent in {}",
             entry.feature,
             entry.function,
@@ -638,6 +636,30 @@ fn allowlist_entries_are_observed_in_cited_fixtures() {
         );
         assert!(seen.insert(call), "duplicate entry {call:?}");
         assert!(allowlist.permits(call.0, call.1));
+    }
+}
+
+#[test]
+fn every_call_ghub_sent_is_allowed_or_denied() {
+    let allowlist = Allowlist::embedded().unwrap();
+    let denied = |FeatureId(id): FeatureId, function: u8| {
+        allowlist
+            .denied()
+            .iter()
+            .any(|deny| deny.feature == id && deny.function.is_none_or(|f| f == function))
+    };
+
+    let fixtures = all_fixtures();
+    assert!(fixtures.len() >= 12, "fixtures not found: {fixtures:?}");
+    for name in fixtures {
+        let transfers = load(&name);
+        for (id, function) in sent_calls(&transfers, &feature_ids(&transfers)) {
+            assert!(
+                allowlist.permits(id, function) || denied(id, function),
+                "{name}: G Hub sent {:#06x} fn{function}, which is neither allowed nor denied",
+                id.0
+            );
+        }
     }
 }
 

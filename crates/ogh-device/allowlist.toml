@@ -224,6 +224,42 @@ feature = 0x0801
 function = 3
 seen_in = "session-a/ghub-launch"
 
+# AutoSleep set sleep timer
+[[allow]]
+feature = 0x0108
+function = 1
+seen_in = "session-b/small-settings"
+
+# iVolumeSet set volume level
+[[allow]]
+feature = 0x0200
+function = 1
+seen_in = "session-b/small-settings"
+
+# LED brightness set
+[[allow]]
+feature = 0x0110
+function = 1
+seen_in = "session-b/small-settings"
+
+# HeadsetTones set tone state
+[[allow]]
+feature = 0x060B
+function = 1
+seen_in = "session-b/small-settings"
+
+# iMixerAudio set mixer settings
+[[allow]]
+feature = 0x0800
+function = 6
+seen_in = "session-b/mixer"
+
+# MixerMic set noise gate
+[[allow]]
+feature = 0x0801
+function = 2
+seen_in = "session-b/eq-mic"
+
 [[deny]]
 feature = 0x010A
 reason = "GenericDFU: firmware update path, never touched even for reads"
@@ -320,32 +356,32 @@ reason = "HeadsetMix: not available below v3 (this device has v2)"
 [[deny]]
 feature = 0x020E
 function = 0
-reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+reason = "MicTest control: observed in session-b/mic-test, held back until the mic test UI exists"
 
 [[deny]]
 feature = 0x020E
 function = 1
-reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+reason = "MicTest control: observed in session-b/mic-test, held back until the mic test UI exists"
 
 [[deny]]
 feature = 0x020E
 function = 2
-reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+reason = "MicTest control: observed in session-b/mic-test, held back until the mic test UI exists"
 
 [[deny]]
 feature = 0x020E
 function = 3
-reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+reason = "MicTest control: not sent in session-b/mic-test (playback ran to its end), held back until the mic test UI exists"
 
 [[deny]]
 feature = 0x020E
 function = 4
-reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+reason = "MicTest control: observed in session-b/mic-test, held back until the mic test UI exists"
 
 [[deny]]
 feature = 0x020E
 function = 5
-reason = "MicTest control: only on an explicit user mic-test request, never captured yet"
+reason = "MicTest control: observed in session-b/mic-test, held back until the mic test UI exists"
 
 [[deny]]
 feature = 0x0102

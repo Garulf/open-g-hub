@@ -120,6 +120,37 @@ pub fn discovered_ids(transfers: &[Transfer]) -> Option<HashMap<u8, FeatureId>> 
     found.then_some(ids)
 }
 
+/// Index to id for a capture: its own discovery replies, or the launch
+/// table for recordings made without discovery (session B).
+pub fn feature_ids(transfers: &[Transfer]) -> HashMap<u8, FeatureId> {
+    discovered_ids(transfers)
+        .unwrap_or_else(|| discovered_ids(&load(LAUNCH)).expect("launch capture has discovery"))
+}
+
+/// Every fixture as `<session dir>/<label>`, sorted.
+pub fn all_fixtures() -> Vec<String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let mut names = Vec::new();
+    for session in fs::read_dir(&root).expect("fixtures dir") {
+        let session = session.expect("fixtures entry").path();
+        if !session.is_dir() {
+            continue;
+        }
+        for file in fs::read_dir(&session).expect("session dir") {
+            let path = file.expect("session entry").path();
+            if path.extension().is_some_and(|ext| ext == "jsonl") {
+                names.push(format!(
+                    "{}/{}",
+                    session.file_name().unwrap().to_string_lossy(),
+                    path.file_stem().unwrap().to_string_lossy()
+                ));
+            }
+        }
+    }
+    names.sort();
+    names
+}
+
 /// Every (feature id, function) sent host to device in a capture, with the
 /// index mapped through `ids`.
 pub fn sent_calls(transfers: &[Transfer], ids: &HashMap<u8, FeatureId>) -> Vec<(FeatureId, u8)> {
