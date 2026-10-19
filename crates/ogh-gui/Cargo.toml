@@ -1,0 +1,17 @@
+[package]
+name = "ogh-gui"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+
+[lib]
+name = "ogh_gui"
+path = "src/lib.rs"
+
+[dependencies]
+crossbeam-channel = "0.5"
+ogh-ipc = { path = "../ogh-ipc" }
+ogh-protocol = { path = "../ogh-protocol" }
+
+[dev-dependencies]
+tempfile = "3"

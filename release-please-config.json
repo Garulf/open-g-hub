@@ -11,6 +11,7 @@
     "crates/ogh-daemon": { "component": "ogh-daemon" },
     "crates/ogh-focus": { "component": "ogh-focus" },
     "crates/ogh-audio": { "component": "ogh-audio" },
-    "crates/ogh-capture": { "component": "ogh-capture" }
+    "crates/ogh-capture": { "component": "ogh-capture" },
+    "crates/ogh-gui": { "component": "ogh-gui" }
   }
 }

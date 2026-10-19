@@ -494,6 +494,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ogh-gui"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "ogh-ipc",
+ "ogh-protocol",
+ "tempfile",
+]
+
+[[package]]
 name = "ogh-ipc"
 version = "0.1.0"
 dependencies = [
