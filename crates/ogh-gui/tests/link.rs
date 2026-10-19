@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
 use ogh_gui::link::{DaemonLink, LinkEvent};
 use ogh_ipc::transport::{Connection, ConnectionCloser};
 use ogh_ipc::{
@@ -378,4 +378,23 @@ fn profile_changes_refresh_the_list() {
         harness.next_event(),
         LinkEvent::Profiles(vec![profile("kept")])
     );
+}
+
+#[test]
+fn dropping_the_link_stops_its_threads_during_an_outage() {
+    let (dir, endpoint) = Harness::endpoint();
+    let mut harness = Harness::start(dir, &endpoint);
+    let first = harness.next_event();
+    assert!(is_down(&first), "{first:?}");
+
+    let Harness { link, woken, .. } = harness;
+    drop(link);
+
+    loop {
+        match woken.recv_timeout(WAIT) {
+            Ok(()) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => panic!("the link threads are still running"),
+        }
+    }
 }

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::mem::discriminant;
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -6,7 +7,9 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use ogh_ipc::{Client, Endpoint, Notification, ProfileInfo, Request, Response, Status};
+use ogh_ipc::{
+    Client, Endpoint, Notification, ProfileInfo, Request, Response, Status, TransportError,
+};
 
 pub const RECONNECT: Duration = Duration::from_secs(1);
 
@@ -26,6 +29,7 @@ pub enum LinkEvent {
 pub struct DaemonLink {
     requests: Sender<Request>,
     events: Receiver<LinkEvent>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl DaemonLink {
@@ -45,6 +49,7 @@ impl DaemonLink {
             wake: Arc::new(wake),
         };
         let stale = Arc::new(AtomicBool::new(false));
+        let shutdown = Arc::new(AtomicBool::new(false));
 
         let subscription = Subscriber {
             endpoint: endpoint.clone(),
@@ -52,6 +57,7 @@ impl DaemonLink {
             emitter: emitter.clone(),
             requests: requests.clone(),
             stale: Arc::clone(&stale),
+            shutdown: Arc::clone(&shutdown),
         };
         thread::spawn(move || subscription.run());
         let sender = RequestSender {
@@ -62,7 +68,11 @@ impl DaemonLink {
         };
         thread::spawn(move || sender.run(&queued));
 
-        DaemonLink { requests, events }
+        DaemonLink {
+            requests,
+            events,
+            shutdown,
+        }
     }
 
     pub fn send(&self, request: Request) {
@@ -75,28 +85,30 @@ impl DaemonLink {
     }
 }
 
-/// Drops each `Set` that a later `Set` of the same setting supersedes. Nothing else is dropped
-/// and the survivors keep their order.
+impl Drop for DaemonLink {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Drops each `Set` that a later `Set` of the same setting supersedes. Any other request is a
+/// barrier: the daemon saves the device state as it is when the save arrives, so the sets
+/// before it must still be sent. Survivors keep their order.
 pub fn coalesce(queue: Vec<Request>) -> Vec<Request> {
-    let superseded = |index: usize, setting| {
-        queue[index + 1..].iter().any(|later| match later {
-            Request::Set { setting: later } => discriminant(later) == discriminant(setting),
-            _ => false,
-        })
-    };
-    let keep: Vec<bool> = queue
-        .iter()
-        .enumerate()
-        .map(|(index, request)| match request {
-            Request::Set { setting } => !superseded(index, setting),
-            _ => true,
+    let mut later_sets = HashSet::new();
+    let mut kept: Vec<Request> = queue
+        .into_iter()
+        .rev()
+        .filter(|request| match request {
+            Request::Set { setting } => later_sets.insert(discriminant(setting)),
+            _ => {
+                later_sets.clear();
+                true
+            }
         })
         .collect();
-    queue
-        .into_iter()
-        .zip(keep)
-        .filter_map(|(request, keep)| keep.then_some(request))
-        .collect()
+    kept.reverse();
+    kept
 }
 
 #[derive(Clone)]
@@ -122,12 +134,13 @@ struct Subscriber {
     emitter: Emitter,
     requests: Sender<Request>,
     stale: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl Subscriber {
     fn run(self) {
         let mut reported = false;
-        loop {
+        while !self.shutdown.load(Ordering::SeqCst) {
             let outage = match self.stream(&mut reported) {
                 ControlFlow::Break(()) => return,
                 ControlFlow::Continue(outage) => outage,
@@ -174,55 +187,66 @@ struct RequestSender {
     client: Option<Client>,
 }
 
+/// Why the rest of a batch is abandoned.
+enum Stop {
+    Unreachable,
+    LinkDropped,
+}
+
 impl RequestSender {
     fn run(mut self, queued: &Receiver<Request>) {
         while let Ok(first) = queued.recv() {
             let mut batch = vec![first];
             batch.extend(queued.try_iter());
             for request in coalesce(batch) {
-                if self.handle(request).is_break() {
-                    return;
+                match self.handle(request) {
+                    Ok(()) => {}
+                    Err(Stop::Unreachable) => break,
+                    Err(Stop::LinkDropped) => return,
                 }
             }
         }
     }
 
-    fn handle(&mut self, request: Request) -> ControlFlow<()> {
+    fn handle(&mut self, request: Request) -> Result<(), Stop> {
         let refreshes = refreshes_profiles(&request);
         match self.call(&request)? {
-            Some(Response::Error(error)) => {
-                self.emitter.emit(LinkEvent::RequestFailed(error.message))
-            }
-            Some(Response::Profiles(profiles)) => self.emitter.emit(LinkEvent::Profiles(profiles)),
-            Some(Response::Done) if refreshes => self.handle(Request::ListProfiles),
-            _ => ControlFlow::Continue(()),
+            Response::Error(error) => self.report(LinkEvent::RequestFailed(error.message)),
+            Response::Profiles(profiles) => self.report(LinkEvent::Profiles(profiles)),
+            Response::Done if refreshes => self.handle(Request::ListProfiles),
+            _ => Ok(()),
         }
     }
 
-    /// `Continue(None)` when the daemon could not be reached; the failure is already reported.
-    fn call(&mut self, request: &Request) -> ControlFlow<(), Option<Response>> {
+    /// An unreachable daemon is reported once here, and the caller drops the rest of its batch.
+    fn call(&mut self, request: &Request) -> Result<Response, Stop> {
         if self.stale.swap(false, Ordering::SeqCst) {
             self.client = None;
         }
-        let response = self
-            .client()
-            .and_then(|client| client.call(request).map_err(|_| ()));
-        match response {
-            Ok(response) => ControlFlow::Continue(Some(response)),
-            Err(()) => {
-                self.client = None;
-                self.emitter
-                    .emit(LinkEvent::RequestFailed(NOT_RUNNING.to_string()))?;
-                ControlFlow::Continue(None)
+        self.exchange(request).map_err(|_| {
+            match self.report(LinkEvent::RequestFailed(NOT_RUNNING.to_string())) {
+                Ok(()) => Stop::Unreachable,
+                Err(stop) => stop,
             }
-        }
+        })
     }
 
-    fn client(&mut self) -> Result<&mut Client, ()> {
-        if self.client.is_none() {
-            self.client = Some(Client::connect(&self.endpoint).map_err(|_| ())?);
+    /// The client is kept only after a successful call, so a failed one reconnects next time.
+    fn exchange(&mut self, request: &Request) -> Result<Response, TransportError> {
+        let mut client = match self.client.take() {
+            Some(client) => client,
+            None => Client::connect(&self.endpoint)?,
+        };
+        let response = client.call(request)?;
+        self.client = Some(client);
+        Ok(response)
+    }
+
+    fn report(&self, event: LinkEvent) -> Result<(), Stop> {
+        match self.emitter.emit(event) {
+            ControlFlow::Continue(()) => Ok(()),
+            ControlFlow::Break(()) => Err(Stop::LinkDropped),
         }
-        self.client.as_mut().ok_or(())
     }
 }
 
@@ -279,16 +303,71 @@ mod tests {
     }
 
     #[test]
-    fn other_requests_between_two_sets_are_kept() {
+    fn a_set_before_a_profile_request_is_kept() {
         let queue = vec![
             headphone_eq(1.0),
             Request::ApplyProfile { name: name("x") },
             headphone_eq(2.0),
         ];
+        assert_eq!(coalesce(queue.clone()), queue);
+    }
+
+    #[test]
+    fn a_set_before_a_save_is_kept_so_the_save_sees_it() {
+        let queue = vec![
+            sidetone(1),
+            Request::SaveProfile { name: name("p") },
+            sidetone(2),
+        ];
+        assert_eq!(coalesce(queue.clone()), queue);
+    }
+
+    #[test]
+    fn sets_are_collapsed_within_each_run_between_barriers() {
+        let queue = vec![
+            sidetone(1),
+            sidetone(2),
+            Request::SaveProfile { name: name("p") },
+            sidetone(3),
+            sidetone(4),
+        ];
         assert_eq!(
             coalesce(queue),
-            vec![Request::ApplyProfile { name: name("x") }, headphone_eq(2.0)]
+            vec![
+                sidetone(2),
+                Request::SaveProfile { name: name("p") },
+                sidetone(4)
+            ]
         );
+    }
+
+    #[test]
+    fn an_unreachable_daemon_fails_a_batch_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (event_tx, events) = unbounded();
+        let sender = RequestSender {
+            endpoint: Endpoint::Path(dir.path().join("daemon.sock")),
+            emitter: Emitter {
+                events: event_tx,
+                wake: Arc::new(|| {}),
+            },
+            stale: Arc::new(AtomicBool::new(false)),
+            client: None,
+        };
+        let (requests, queued) = unbounded();
+        for request in [
+            Request::ApplyProfile { name: name("a") },
+            Request::SaveProfile { name: name("b") },
+            Request::DeleteProfile { name: name("c") },
+        ] {
+            requests.send(request).unwrap();
+        }
+        drop(requests);
+
+        sender.run(&queued);
+
+        let events: Vec<_> = events.try_iter().collect();
+        assert_eq!(events, [LinkEvent::RequestFailed(NOT_RUNNING.to_string())]);
     }
 
     #[test]
