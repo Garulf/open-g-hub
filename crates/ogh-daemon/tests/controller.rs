@@ -597,3 +597,54 @@ fn applied_profile_holds_until_the_focus_changes_app() {
     );
     harness.finish();
 }
+
+#[test]
+fn profile_switch_waits_for_writes_in_flight() {
+    let harness = Harness::start_with(|store| {
+        store.save_profile("default", sidetone_profile(0)).unwrap();
+        store.save_profile("a", sidetone_profile(100)).unwrap();
+        store.link_app("a", "a.exe").unwrap();
+        store.save_profile("b", sidetone_profile(0)).unwrap();
+        store.link_app("b", "b.exe").unwrap();
+    });
+    harness.connect(snapshot(0, NoiseGate::Off));
+
+    harness.focus("a.exe");
+    harness.let_focus_settle();
+    let (id, writes) = harness.write();
+    assert_eq!(writes, vec![DeviceWrite::Sidetone(Sidetone(6))]);
+
+    harness.focus("b.exe");
+    harness.let_focus_settle();
+    assert_eq!(harness.status().active_profile.as_deref(), Some("b"));
+    harness.no_write();
+
+    harness.update(DeviceUpdate::WriteDone { id, result: Ok(()) });
+    assert_eq!(
+        harness.write_and_finish(),
+        vec![DeviceWrite::Sidetone(Sidetone(0))]
+    );
+    harness.no_write();
+    harness.finish();
+}
+
+#[test]
+fn default_profile_creation_retries_after_a_failed_save() {
+    let dir = TempDir::new().unwrap();
+    let blocker = dir.path().join("blocked");
+    let path = blocker.join("config.toml");
+    let harness = Harness::start_store(dir, Store::open(&path));
+    std::fs::write(&blocker, "").unwrap();
+
+    let first = snapshot(3, NoiseGate::Home);
+    harness.connect(first.clone());
+    assert_eq!(harness.profiles()[0].settings, ProfileSettings::default());
+    assert!(!path.exists());
+
+    std::fs::remove_file(&blocker).unwrap();
+    harness.update(DeviceUpdate::Closed(Connection::NotFound));
+    harness.connect(first.clone());
+    assert_eq!(harness.profiles()[0].settings, profile_settings(&first));
+    assert!(path.exists());
+    harness.finish();
+}

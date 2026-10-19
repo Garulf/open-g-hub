@@ -53,6 +53,8 @@ pub struct Controller {
     features: Vec<FeatureInfo>,
     snapshot: DeviceSnapshot,
     default_checked: bool,
+    /// An automatic application was skipped while writes were in flight.
+    apply_wanted: bool,
     next_write_id: u64,
     pending: HashMap<u64, PendingWrite>,
     focus_available: bool,
@@ -78,6 +80,7 @@ impl Controller {
             features: Vec::new(),
             snapshot: DeviceSnapshot::default(),
             default_checked: false,
+            apply_wanted: false,
             next_write_id: 1,
             pending: HashMap::new(),
             focus_available: true,
@@ -195,6 +198,7 @@ impl Controller {
                 self.snapshot = snapshot;
                 self.create_default_profile();
                 self.active = self.resolve_active();
+                self.apply_wanted = false;
                 self.apply_active();
             }
             DeviceUpdate::Event(event) if self.is_connected() => {
@@ -214,6 +218,7 @@ impl Controller {
         self.connection = connection;
         self.features.clear();
         self.snapshot = DeviceSnapshot::default();
+        self.apply_wanted = false;
         let error = device_error(&DeviceError::Disconnected);
         for (_, pending) in self.pending.drain() {
             if let Some(reply) = pending.reply {
@@ -222,14 +227,14 @@ impl Controller {
         }
     }
 
-    /// Once per controller lifetime, a default profile with no settings takes
-    /// what the headset holds, so the first profile switch has something to
-    /// return to.
+    /// A default profile with no settings takes what the headset holds, so
+    /// the first profile switch has something to return to. Done once the
+    /// default has settings; a failed save or unreadable config tries again
+    /// at the next connect.
     fn create_default_profile(&mut self) {
         if self.default_checked {
             return;
         }
-        self.default_checked = true;
         let Ok(config) = self.store.config() else {
             return;
         };
@@ -238,11 +243,12 @@ impl Controller {
             .profiles
             .get(&name)
             .is_none_or(|profile| profile.settings == ProfileSettings::default());
-        if is_empty {
-            let _ = self
+        let saved = !is_empty
+            || self
                 .store
-                .save_profile(&name, convert::profile_settings(&self.snapshot));
-        }
+                .save_profile(&name, convert::profile_settings(&self.snapshot))
+                .is_ok();
+        self.default_checked = saved;
     }
 
     fn finish_write(&mut self, id: u64, result: Result<(), DeviceError>) {
@@ -261,6 +267,14 @@ impl Controller {
         if let Some(reply) = pending.reply {
             let _ = reply.send(response);
         }
+        self.apply_if_wanted();
+    }
+
+    fn apply_if_wanted(&mut self) {
+        if self.apply_wanted && self.pending.is_empty() {
+            self.apply_wanted = false;
+            self.apply_active();
+        }
     }
 
     fn send_writes(&mut self, writes: Vec<DeviceWrite>, reply: Option<Sender<Response>>) {
@@ -272,7 +286,10 @@ impl Controller {
         };
         if self.devices.send(command).is_err() {
             if let Some(reply) = reply {
-                let _ = reply.send(Response::Error(self.closed_error()));
+                let _ = reply.send(Response::Error(IpcError {
+                    kind: ErrorKind::NotConnected,
+                    message: "device worker stopped".to_string(),
+                }));
             }
             return;
         }
@@ -372,6 +389,10 @@ impl Controller {
         if !self.is_connected() {
             return;
         }
+        if !self.pending.is_empty() {
+            self.apply_wanted = true;
+            return;
+        }
         let Some(name) = self.active.clone() else {
             return;
         };
@@ -382,12 +403,41 @@ impl Controller {
     }
 
     fn handle_request(&mut self, request: Request, reply: Sender<Response>) {
-        let response = match request {
-            Request::Set { setting } => return self.set(&setting, reply),
-            Request::ApplyProfile { name } => return self.apply_profile(&name, reply),
-            other => self.answer(other),
-        };
-        let _ = reply.send(response);
+        match request {
+            Request::Set { setting } => self.set(&setting, reply),
+            Request::ApplyProfile { name } => self.apply_profile(&name, reply),
+            Request::Hello { .. } => respond(&reply, hello()),
+            Request::Status => respond(&reply, Response::Status(self.status())),
+            Request::Features => respond(&reply, self.features_response()),
+            Request::ListProfiles => respond(&reply, self.list_profiles()),
+            Request::SaveProfile { name } => respond(&reply, self.save_profile(&name)),
+            Request::DeleteProfile { name } => respond(
+                &reply,
+                self.mutate_store(|store| store.delete_profile(&name)),
+            ),
+            Request::SetDefaultProfile { name } => {
+                respond(&reply, self.mutate_store(|store| store.set_default(&name)))
+            }
+            Request::LinkApp { profile, app } => respond(
+                &reply,
+                self.mutate_store(|store| store.link_app(&profile, &app)),
+            ),
+            Request::UnlinkApp { app } => {
+                respond(&reply, self.mutate_store(|store| store.unlink_app(&app)))
+            }
+            Request::SetAutoSwitch { enabled } => respond(
+                &reply,
+                self.mutate_store(|store| store.set_audio_switch(enabled)),
+            ),
+            Request::Subscribe => respond(
+                &reply,
+                Response::Error(IpcError {
+                    kind: ErrorKind::BadRequest,
+                    message: "subscribe is answered by the connection, not the controller"
+                        .to_string(),
+                }),
+            ),
+        }
     }
 
     fn set(&mut self, setting: &Setting, reply: Sender<Response>) {
@@ -429,39 +479,6 @@ impl Controller {
         });
         self.active = self.resolve_active();
         Ok(writes)
-    }
-
-    fn answer(&mut self, request: Request) -> Response {
-        match request {
-            Request::Hello { .. } => Response::Hello(Hello {
-                version: IPC_VERSION,
-                daemon_version: env!("CARGO_PKG_VERSION").to_string(),
-            }),
-            Request::Status => Response::Status(self.status()),
-            Request::Features => self.features_response(),
-            Request::ListProfiles => self.list_profiles(),
-            Request::SaveProfile { name } => self.save_profile(&name),
-            Request::DeleteProfile { name } => {
-                self.mutate_store(|store| store.delete_profile(&name))
-            }
-            Request::SetDefaultProfile { name } => {
-                self.mutate_store(|store| store.set_default(&name))
-            }
-            Request::LinkApp { profile, app } => {
-                self.mutate_store(|store| store.link_app(&profile, &app))
-            }
-            Request::UnlinkApp { app } => self.mutate_store(|store| store.unlink_app(&app)),
-            Request::SetAutoSwitch { enabled } => {
-                self.mutate_store(|store| store.set_audio_switch(enabled))
-            }
-            Request::Subscribe => Response::Error(IpcError {
-                kind: ErrorKind::BadRequest,
-                message: "subscribe is answered by the connection, not the controller".to_string(),
-            }),
-            Request::Set { .. } | Request::ApplyProfile { .. } => {
-                unreachable!("handled before answer")
-            }
-        }
     }
 
     fn features_response(&self) -> Response {
@@ -520,6 +537,17 @@ impl Controller {
             Err(error) => Response::Error(error),
         }
     }
+}
+
+fn respond(reply: &Sender<Response>, response: Response) {
+    let _ = reply.send(response);
+}
+
+fn hello() -> Response {
+    Response::Hello(Hello {
+        version: IPC_VERSION,
+        daemon_version: env!("CARGO_PKG_VERSION").to_string(),
+    })
 }
 
 fn no_such_profile(name: &str) -> IpcError {
