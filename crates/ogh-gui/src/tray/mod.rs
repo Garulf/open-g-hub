@@ -1,15 +1,7 @@
-#[cfg(any(target_os = "linux", windows))]
-use std::ops::ControlFlow;
-
-#[cfg(any(target_os = "linux", windows))]
-use crate::launcher::Launcher;
-#[cfg(any(target_os = "linux", windows))]
-use crate::link::DaemonLink;
-#[cfg(any(target_os = "linux", windows))]
-use crate::tray_menu::TrayAction;
-
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(all(test, any(target_os = "linux", windows)))]
+mod test_fixtures;
 #[cfg(windows)]
 mod windows;
 
@@ -27,11 +19,15 @@ pub fn run() -> Result<(), String> {
 /// Carries out one menu action; `Break` means Quit.
 #[cfg(any(target_os = "linux", windows))]
 fn perform(
-    action: TrayAction,
-    link: Option<&DaemonLink>,
-    launcher: &mut Launcher,
+    action: crate::tray_menu::TrayAction,
+    link: Option<&crate::link::DaemonLink>,
+    launcher: &mut crate::launcher::Launcher,
     report: impl FnOnce(String),
-) -> ControlFlow<()> {
+) -> std::ops::ControlFlow<()> {
+    use std::ops::ControlFlow;
+
+    use crate::tray_menu::TrayAction;
+
     match action {
         TrayAction::Request(request) => {
             if let Some(link) = link {

@@ -162,18 +162,19 @@ fn forward_events(inputs: Sender<Input>, thread_id: u32) {
     }));
 }
 
-fn tray_icon(shared: &Shared) -> Result<TrayIcon, String> {
+fn tray_icon(shared: &Shared) -> Result<(TrayIcon, HashMap<MenuId, TrayAction>), String> {
     let (rgba, width, height) = icon::rgba(IconSize::Small);
     let icon = Icon::from_rgba(rgba, width, height)
         .map_err(|error| format!("could not build the tray icon: {error}"))?;
-    let (menu, _) = build_menu(&tray_menu::menu(shared));
-    TrayIconBuilder::new()
+    let (menu, ids) = build_menu(&tray_menu::menu(shared));
+    let tray = TrayIconBuilder::new()
         .with_icon(icon)
         .with_tooltip(tray_menu::tooltip(shared))
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
         .build()
-        .map_err(|error| format!("could not register the tray: {error}"))
+        .map_err(|error| format!("could not register the tray: {error}"))?;
+    Ok((tray, ids))
 }
 
 fn message_loop(app: &mut App) -> Result<(), String> {
@@ -191,6 +192,7 @@ fn message_loop(app: &mut App) -> Result<(), String> {
             }
             _ => {}
         }
+        // SAFETY: `message` was filled in by the successful GetMessageW call above.
         unsafe {
             TranslateMessage(&message);
             DispatchMessageW(&message);
@@ -216,19 +218,17 @@ pub fn run() -> Result<(), String> {
             None
         }
     };
-    let tray = tray_icon(&shared)?;
+    let (tray, ids) = tray_icon(&shared)?;
     // The thread has a message queue only once the tray window exists, so the link starts after it.
     let link = endpoint.map(|endpoint| DaemonLink::start(endpoint, move || wake(thread_id)));
     let mut app = App {
         tray,
         shared,
-        ids: HashMap::new(),
+        ids,
         link,
         launcher,
         inputs,
     };
-    app.redraw();
-
     message_loop(&mut app)
 }
 
@@ -236,71 +236,13 @@ pub fn run() -> Result<(), String> {
 mod tests {
     use std::collections::HashMap;
 
-    use ogh_ipc::{
-        AutoSwitchStatus, Battery, Channel, Charge, Connection, DeviceSettings, FocusStatus,
-        Headset, ProfileInfo, ProfileSettings, Status, StreamMixSetting,
-    };
     use tray_icon::dpi::PhysicalPosition;
     use tray_icon::menu::{MenuId, MenuItemKind};
     use tray_icon::{MouseButton, MouseButtonState, Rect, TrayIconEvent, TrayIconId};
 
-    use super::{Input, build_menu, click_input};
-    use crate::Shared;
-    use crate::link::LinkEvent;
+    use super::{Input, build_menu, click_input, escape_mnemonic};
+    use crate::tray::test_fixtures::connected_headset;
     use crate::tray_menu::{TrayAction, TrayItem, menu};
-
-    fn channel(level_percent: u8) -> Channel {
-        Channel {
-            level_percent,
-            muted: false,
-        }
-    }
-
-    fn connected_headset() -> Shared {
-        let status = Status {
-            connection: Connection::Connected,
-            headset: Headset::InUse,
-            battery: Some(Battery {
-                percent: 80,
-                charge: Charge::Charging,
-            }),
-            firmware: None,
-            settings: DeviceSettings {
-                profile: ProfileSettings {
-                    sidetone_percent: Some(50),
-                    balance: Some(6),
-                    stream_mix: Some(StreamMixSetting {
-                        output: channel(50),
-                        game: channel(70),
-                        voice: channel(30),
-                    }),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            active_profile: Some("Music".to_string()),
-            focus: FocusStatus {
-                available: true,
-                app: None,
-            },
-            auto_switch: AutoSwitchStatus {
-                enabled: true,
-                active: false,
-                error: None,
-            },
-            config_error: None,
-        };
-        let profile = |name: &str| ProfileInfo {
-            name: name.to_string(),
-            apps: Vec::new(),
-            is_default: false,
-            settings: ProfileSettings::default(),
-        };
-        let mut shared = Shared::default();
-        shared.apply(LinkEvent::Status(Box::new(status)));
-        shared.apply(LinkEvent::Profiles(vec![profile("Game"), profile("Music")]));
-        shared
-    }
 
     fn count_actionable(items: &[TrayItem]) -> usize {
         items
@@ -322,7 +264,7 @@ mod tests {
         for (item, kind) in items.iter().zip(kinds) {
             match (item, kind) {
                 (TrayItem::Label(label), MenuItemKind::MenuItem(entry)) => {
-                    assert_eq!(&entry.text(), label);
+                    assert_eq!(entry.text(), escape_mnemonic(label));
                     assert!(!entry.is_enabled());
                     assert!(!actions.contains_key(entry.id()));
                 }
@@ -335,7 +277,7 @@ mod tests {
                     },
                     MenuItemKind::MenuItem(entry),
                 ) => {
-                    assert_eq!(&entry.text(), label);
+                    assert_eq!(entry.text(), escape_mnemonic(label));
                     assert_eq!(entry.is_enabled(), *enabled);
                     assert_eq!(actions.get(entry.id()), Some(action));
                 }
@@ -348,7 +290,7 @@ mod tests {
                     },
                     MenuItemKind::Check(entry),
                 ) => {
-                    assert_eq!(&entry.text(), label);
+                    assert_eq!(entry.text(), escape_mnemonic(label));
                     assert_eq!(entry.is_checked(), *checked);
                     assert_eq!(entry.is_enabled(), *enabled);
                     assert_eq!(actions.get(entry.id()), Some(action));
@@ -361,13 +303,20 @@ mod tests {
                     },
                     MenuItemKind::Submenu(entry),
                 ) => {
-                    assert_eq!(&entry.text(), label);
+                    assert_eq!(entry.text(), escape_mnemonic(label));
                     assert_eq!(entry.is_enabled(), *enabled);
                     assert_matches(items, &entry.items(), actions);
                 }
                 (item, _) => panic!("menu entry does not match {item:?}"),
             }
         }
+    }
+
+    #[test]
+    fn labels_double_their_ampersands() {
+        assert_eq!(escape_mnemonic("Music"), "Music");
+        assert_eq!(escape_mnemonic("Rock & Roll"), "Rock && Roll");
+        assert_eq!(escape_mnemonic("&&"), "&&&&");
     }
 
     #[test]

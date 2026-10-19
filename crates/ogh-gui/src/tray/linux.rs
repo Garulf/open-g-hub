@@ -203,15 +203,12 @@ fn serve(
 mod tests {
     use crossbeam_channel::unbounded;
     use ksni::menu::MenuItem;
-    use ogh_ipc::{
-        AutoSwitchStatus, Battery, Channel, Charge, Connection, DeviceSettings, FocusStatus,
-        Headset, ProfileInfo, ProfileSettings, Request, Setting, Status, StreamMixSetting,
-    };
+    use ogh_ipc::{Request, Setting};
 
     use super::{TrayModel, argb, serve, to_ksni};
     use crate::Shared;
     use crate::launcher::Launcher;
-    use crate::link::LinkEvent;
+    use crate::tray::test_fixtures::connected_headset;
     use crate::tray_menu::{TrayAction, TrayItem, menu};
 
     #[derive(Debug, PartialEq)]
@@ -291,59 +288,6 @@ mod tests {
                 },
             })
             .collect()
-    }
-
-    fn channel(level_percent: u8) -> Channel {
-        Channel {
-            level_percent,
-            muted: false,
-        }
-    }
-
-    fn connected_headset() -> Shared {
-        let status = Status {
-            connection: Connection::Connected,
-            headset: Headset::InUse,
-            battery: Some(Battery {
-                percent: 80,
-                charge: Charge::Charging,
-            }),
-            firmware: None,
-            settings: DeviceSettings {
-                profile: ProfileSettings {
-                    sidetone_percent: Some(50),
-                    balance: Some(6),
-                    stream_mix: Some(StreamMixSetting {
-                        output: channel(50),
-                        game: channel(70),
-                        voice: channel(30),
-                    }),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            active_profile: Some("Music".to_string()),
-            focus: FocusStatus {
-                available: true,
-                app: None,
-            },
-            auto_switch: AutoSwitchStatus {
-                enabled: true,
-                active: false,
-                error: None,
-            },
-            config_error: None,
-        };
-        let profile = |name: &str| ProfileInfo {
-            name: name.to_string(),
-            apps: Vec::new(),
-            is_default: false,
-            settings: ProfileSettings::default(),
-        };
-        let mut shared = Shared::default();
-        shared.apply(LinkEvent::Status(Box::new(status)));
-        shared.apply(LinkEvent::Profiles(vec![profile("Game"), profile("Music")]));
-        shared
     }
 
     fn model(shared: Shared) -> (TrayModel, crossbeam_channel::Receiver<TrayAction>) {
