@@ -452,7 +452,9 @@ fn set_custom_eq_to_the_custom_slot_is_sent() {
     assert_eq!(device.writes().last(), Some(&ghub_write));
 }
 
-const SESSION_B_SETTINGS: [&str; 4] = [
+const SESSION_B_SETTINGS: [&str; 6] = [
+    "session-b/sidetone",
+    "session-b/balance",
     "session-b/mixer",
     "session-b/small-settings",
     "session-b/eq-headphone",
@@ -557,6 +559,92 @@ fn off_shape_mixer_writes_are_refused_without_writing() {
             changed(ghub.clone(), 2, 2),
             changed(ghub.clone(), 15, 2),
             [&ghub[..], &[0x04, 0x10, 0x00]].concat(),
+        ],
+    );
+}
+
+#[test]
+fn mixer_writes_changing_mic_out_or_bluetooth_are_refused_without_writing() {
+    let ghub = params_at("session-b/mixer", 38);
+    let mic_out_full = changed(changed(ghub.clone(), 5, 0x20), 6, 0x00);
+    let bluetooth_full = changed(changed(ghub.clone(), 11, 0x20), 12, 0x00);
+    assert_all_refused(
+        FeatureId::MIXER_AUDIO,
+        6,
+        &[
+            mic_out_full,
+            bluetooth_full,
+            changed(ghub.clone(), 5, 0x0f),
+            changed(ghub.clone(), 6, 0x00),
+            changed(ghub.clone(), 11, 0x11),
+            changed(ghub, 12, 0x00),
+        ],
+    );
+}
+
+#[test]
+fn off_shape_sidetone_writes_are_refused_without_writing() {
+    assert_all_refused(
+        FeatureId::HEADSET_SIDETONE,
+        1,
+        &[
+            vec![0x01, 0xff, 0x07],
+            vec![0x02, 0xff, 0x03],
+            vec![0x01, 0xfe, 0x03],
+            vec![0x01, 0x03],
+            vec![0x03],
+            vec![0x01, 0xff, 0x03, 0x00],
+            vec![],
+        ],
+    );
+}
+
+#[test]
+fn off_shape_balance_writes_are_refused_without_writing() {
+    assert_all_refused(
+        FeatureId::HEADSET_MIX,
+        1,
+        &[vec![13], vec![0xff], vec![6, 0], vec![]],
+    );
+}
+
+#[test]
+fn eq_cards_mixing_graphic_and_parametric_bands_are_refused_without_writing() {
+    let parametric = params_at("session-b/eq-headphone", 72);
+    let graphic = params_at("session-b/eq-headphone", 47);
+    let q_at = |band: usize| 3 + band * 5 + 2;
+    assert_all_refused(
+        FeatureId::ADVANCED_PARA_EQ,
+        2,
+        &[
+            changed(parametric.clone(), q_at(0), 0x00),
+            changed(parametric, q_at(9), 0x00),
+            changed(graphic.clone(), q_at(0), 0x16),
+            changed(graphic, q_at(4), 0x16),
+        ],
+    );
+}
+
+#[test]
+fn eq_cards_with_frequencies_out_of_order_are_refused_without_writing() {
+    let ghub = params_at("session-b/eq-headphone", 72);
+    let freq_at = |band: usize| 3 + band * 5;
+    let with_freq = |band: usize, freq: u16| {
+        let [hi, lo] = freq.to_be_bytes();
+        changed(
+            changed(ghub.clone(), freq_at(band), hi),
+            freq_at(band) + 1,
+            lo,
+        )
+    };
+    assert_all_refused(
+        FeatureId::ADVANCED_PARA_EQ,
+        2,
+        &[
+            with_freq(1, 20),
+            with_freq(2, 40),
+            with_freq(9, 10000),
+            with_freq(4, 1347),
         ],
     );
 }
