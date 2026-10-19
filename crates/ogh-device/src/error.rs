@@ -22,6 +22,8 @@ pub enum DeviceError {
     HeadsetDisconnected,
     Disconnected,
     FeatureMissing(FeatureId),
+    /// The operating system refused to open the device.
+    AccessDenied(String),
     Io(String),
 }
 
@@ -68,7 +70,7 @@ impl fmt::Display for DeviceError {
                     None => Ok(()),
                 }
             }
-            Self::Timeout => write!(f, "the device did not answer within one second"),
+            Self::Timeout => write!(f, "the device did not answer in time"),
             Self::HeadsetDisconnected => write!(
                 f,
                 "the headset is not connected to the base station (docked, powered off or out of range)"
@@ -79,6 +81,7 @@ impl fmt::Display for DeviceError {
                 "the device does not offer feature {}",
                 FeatureName(*feature)
             ),
+            Self::AccessDenied(detail) => write!(f, "{detail}"),
             Self::Io(detail) => write!(f, "device I/O error: {detail}"),
         }
     }

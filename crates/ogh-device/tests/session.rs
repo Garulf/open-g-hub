@@ -541,6 +541,13 @@ fn transport_gone_maps_to_disconnected() {
 }
 
 #[test]
+fn timeout_message_does_not_claim_a_duration() {
+    let message = DeviceError::Timeout.to_string();
+
+    assert!(!message.contains("second"), "{message}");
+}
+
+#[test]
 fn ghub_running_message_names_the_agent_and_the_tray() {
     let message = DeviceError::GHubRunning.to_string();
 
