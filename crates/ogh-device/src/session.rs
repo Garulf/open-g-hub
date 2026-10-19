@@ -19,12 +19,17 @@ use crate::{FeatureId, HidTransport, guard, param_rules};
 /// Longer than the slowest reply captured: 2.25 s for getHardwareInfo while
 /// the base station was still booting after a replug.
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(3000);
+/// Longer waits are clamped, so the deadline arithmetic cannot overflow.
+const MAX_REQUEST_TIMEOUT: Duration = Duration::from_secs(3600);
 const ROOT_INDEX: u8 = 0;
 /// Root and FeatureSet sit at 0 and 1; the paged list starts after them.
 const FIRST_LISTED_INDEX: u8 = 2;
 const SINGLE_FRAME: u8 = 0;
 const EVENT_SW_ID: u8 = 0;
 const NO_WAIT: i32 = 0;
+/// A chatty device must not stall a send: whatever is left is read while
+/// waiting for the reply.
+const MAX_DRAIN_FRAMES: usize = 64;
 
 /// Root is never listed by the device, so its flags and version read 0.
 const ROOT: FeatureInfo = FeatureInfo {
@@ -56,7 +61,8 @@ pub struct Session<T: Transport> {
 
 impl Session<HidTransport> {
     /// Refuses while G Hub's agent runs, then opens the HID device, runs
-    /// discovery and reads whether the headset is connected.
+    /// discovery and reads whether the headset is connected. A timed-out or
+    /// rejected availability read leaves it unknown instead of failing.
     pub fn open() -> Result<Self, DeviceError> {
         Self::open_with(guard::ghub_agent_running, HidTransport::open)
     }
@@ -69,6 +75,16 @@ impl<T: Transport> Session<T> {
         guard: fn() -> Result<bool, DeviceError>,
         opener: impl FnOnce() -> Result<T, DeviceError>,
     ) -> Result<Self, DeviceError> {
+        Self::open_with_timeout(guard, opener, REQUEST_TIMEOUT)
+    }
+
+    /// Like `open_with`, with `request_timeout` also applying to the
+    /// requests of the open sequence.
+    pub(crate) fn open_with_timeout(
+        guard: fn() -> Result<bool, DeviceError>,
+        opener: impl FnOnce() -> Result<T, DeviceError>,
+        request_timeout: Duration,
+    ) -> Result<Self, DeviceError> {
         if guard()? {
             return Err(DeviceError::GHubRunning);
         }
@@ -79,11 +95,13 @@ impl<T: Transport> Session<T> {
             features: vec![ROOT],
             events: VecDeque::new(),
             headset_available: None,
-            request_timeout: REQUEST_TIMEOUT,
+            request_timeout: request_timeout.min(MAX_REQUEST_TIMEOUT),
         };
         session.discover()?;
-        session.headset_available()?;
-        Ok(session)
+        match session.headset_available() {
+            Ok(_) | Err(DeviceError::Timeout | DeviceError::Rejected { .. }) => Ok(session),
+            Err(e) => Err(e),
+        }
     }
 
     /// The table read at open, from Root at index 0 upwards.
@@ -133,9 +151,9 @@ impl<T: Transport> Session<T> {
     }
 
     /// How long a request waits for its reply, measured as wall time across
-    /// reads.
+    /// reads. Capped at an hour.
     pub fn set_request_timeout(&mut self, timeout: Duration) {
-        self.request_timeout = timeout;
+        self.request_timeout = timeout.min(MAX_REQUEST_TIMEOUT);
     }
 
     pub fn take_events(&mut self) -> Vec<Event> {
@@ -245,9 +263,13 @@ impl<T: Transport> Session<T> {
     }
 
     /// Queues events already waiting and discards everything else, so a late
-    /// reply to an earlier request cannot answer the next one.
+    /// reply to an earlier request cannot answer the next one. Stops after
+    /// `MAX_DRAIN_FRAMES` frames.
     fn drain_pending(&mut self) -> Result<(), DeviceError> {
-        while let Some(frame) = self.transport.read(NO_WAIT)? {
+        for _ in 0..MAX_DRAIN_FRAMES {
+            let Some(frame) = self.transport.read(NO_WAIT)? else {
+                break;
+            };
             if let Some(event) = self.event_in(&frame) {
                 self.events.push_back(event);
             }

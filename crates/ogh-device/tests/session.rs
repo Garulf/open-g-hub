@@ -119,6 +119,48 @@ fn open_reads_headset_availability() {
     );
 }
 
+fn discovery_only_device() -> ScriptedTransport {
+    let device = ScriptedTransport::new();
+    for hex in &testing::LAUNCH_OPEN_REPLIES[..4] {
+        device.push_frame(testing::frame_from_hex(hex));
+    }
+    device
+}
+
+#[test]
+fn open_survives_a_timed_out_availability_read() {
+    let device = discovery_only_device();
+    device.push_timeout();
+
+    let mut session =
+        Session::with_transport_and_timeout(device.clone(), SHORT_TIMEOUT).expect("open succeeds");
+
+    device.push_frame(frame_from_hex("020c0400136b00"));
+    assert_eq!(session.headset_available(), Ok(true));
+}
+
+#[test]
+fn open_survives_a_rejected_availability_read() {
+    let device = discovery_only_device();
+    device.push_frame(frame_from_hex("020c0600ff136b05"));
+
+    let mut session =
+        Session::with_transport_and_timeout(device.clone(), SHORT_TIMEOUT).expect("open succeeds");
+
+    device.push_frame(frame_at(LAUNCH, MIC_TEST_GET_STATE_REPLY_NOT_CONNECTED));
+    assert_eq!(session.headset_available(), Ok(false));
+}
+
+#[test]
+fn open_still_fails_when_the_availability_read_loses_the_device() {
+    let device = discovery_only_device();
+    device.push_failure();
+
+    let result = Session::with_transport_and_timeout(device, SHORT_TIMEOUT);
+
+    assert_eq!(result.err(), Some(DeviceError::Disconnected));
+}
+
 #[test]
 fn discovery_rejects_a_repeated_feature_id() {
     let device = ScriptedTransport::new();
@@ -239,6 +281,49 @@ fn request_timeout_defaults_to_three_seconds() {
 }
 
 #[test]
+fn huge_request_timeout_is_clamped_instead_of_overflowing() {
+    let (mut session, device) = open_scripted();
+    session.set_request_timeout(Duration::MAX);
+    device.push_frame(frame_at(LAUNCH, BATTERY_REPLY));
+
+    assert!(session.request_timeout() <= Duration::from_secs(3600));
+    assert_eq!(
+        session.request(FeatureId::BATTERY_SOC, 0, &[]),
+        Ok(vec![0x64, 0x64, 0x03])
+    );
+}
+
+#[test]
+fn reply_that_arrives_with_the_write_is_returned_not_drained() {
+    let (mut session, device) = open_scripted();
+    device.push_reply(frame_at(LAUNCH, BATTERY_REPLY));
+
+    assert_eq!(
+        session.request(FeatureId::BATTERY_SOC, 0, &[]),
+        Ok(vec![0x64, 0x64, 0x03])
+    );
+}
+
+#[test]
+fn drain_before_a_write_is_bounded() {
+    let (mut session, device) = open_scripted();
+    let chatty = 200;
+    for _ in 0..chatty {
+        device.push_arrived(frame_at(DOCK_CYCLE, LIFT_MIC_TEST_EVENT));
+    }
+    device.push_reply(frame_at(LAUNCH, BATTERY_REPLY));
+
+    assert_eq!(
+        session.request(FeatureId::BATTERY_SOC, 0, &[]),
+        Ok(vec![0x64, 0x64, 0x03])
+    );
+
+    let pending_at_write = *device.pending_reads_at_writes().last().unwrap();
+    assert!(pending_at_write > chatty + 1 - 64 - 1, "{pending_at_write}");
+    assert_eq!(session.take_events().len(), chatty);
+}
+
+#[test]
 fn request_deadline_is_wall_time_across_reads() {
     let (mut session, device) = open_scripted();
     for _ in 0..20 {
@@ -341,7 +426,7 @@ fn builder_with_another_sw_id_is_refused_without_writing() {
 fn set_custom_eq_to_a_factory_slot_is_refused_without_writing() {
     let (mut session, device) = open_scripted();
 
-    for slot in [0, 1, 2] {
+    for slot in [0, 1, 2, 4, 0xff] {
         assert_refused_without_writing(
             &mut session,
             &device,
