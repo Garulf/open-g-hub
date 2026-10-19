@@ -5,7 +5,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use ogh_device::{DeviceError, FeatureInfo};
 use ogh_ipc::{
     AutoSwitchStatus, Connection, ErrorKind, Feature, FocusStatus, Headset, Hello, IPC_VERSION,
-    IpcError, Notification, ProfileInfo, ProfileSettings, Request, Response, Setting, Status,
+    IpcError, Notification, ProfileInfo, Request, Response, Setting, Status,
 };
 
 use crate::autoswitch::{AudioSwitchOutcome, Command};
@@ -13,6 +13,11 @@ use crate::config::{AudioSwitchConfig, Store};
 use crate::convert;
 use crate::device_worker::{DeviceCommand, DeviceUpdate};
 use crate::snapshot::{DeviceSnapshot, DeviceWrite};
+use default_capture::DefaultCapture;
+use deferred::DeferredSave;
+
+mod default_capture;
+mod deferred;
 
 /// How long an app must keep focus before its profile applies.
 pub const FOCUS_SETTLE: Duration = Duration::from_millis(250);
@@ -45,20 +50,6 @@ struct PendingFocus {
 struct ManualProfile {
     name: String,
     chosen_over: Option<String>,
-}
-
-struct DeferredSave {
-    name: String,
-    reply: Sender<Response>,
-}
-
-/// How far the default profile has been filled from the headset.
-enum DefaultCapture {
-    Unchecked,
-    /// Saved while the headset-side settings were unknown; the named profile
-    /// gets its missing fields from the first snapshot that knows them.
-    Partial(String),
-    Done,
 }
 
 pub struct Controller {
@@ -284,88 +275,6 @@ impl Controller {
             }
         }
         self.run_deferred_saves();
-    }
-
-    /// A default profile with no settings takes what the headset holds, so
-    /// the first profile switch has something to return to. Settings the
-    /// headset only reports while in use are filled in from the first
-    /// snapshot that has them. A failed save or unreadable config tries again
-    /// at the next connect or refresh.
-    fn create_default_profile(&mut self) {
-        let Ok(config) = self.store.config() else {
-            return;
-        };
-        let settings = convert::profile_settings(&self.snapshot);
-        let headset_known = headset_settings_known(&self.snapshot);
-        match &self.default_capture {
-            DefaultCapture::Done => {}
-            DefaultCapture::Unchecked => {
-                let name = config.default_profile.clone();
-                let is_empty = config
-                    .profiles
-                    .get(&name)
-                    .is_none_or(|profile| profile.settings == ProfileSettings::default());
-                if !is_empty {
-                    self.default_capture = DefaultCapture::Done;
-                } else if self.store.save_profile(&name, settings).is_ok() {
-                    self.default_capture = if headset_known {
-                        DefaultCapture::Done
-                    } else {
-                        DefaultCapture::Partial(name)
-                    };
-                }
-            }
-            DefaultCapture::Partial(name) => {
-                if !headset_known {
-                    return;
-                }
-                let Some(saved) = config.profiles.get(name) else {
-                    self.default_capture = DefaultCapture::Done;
-                    return;
-                };
-                let completed = fill_missing(saved.settings.clone(), settings);
-                let name = name.clone();
-                if self.store.save_profile(&name, completed).is_ok() {
-                    self.default_capture = DefaultCapture::Done;
-                }
-            }
-        }
-    }
-
-    fn finish_write(&mut self, id: u64, result: Result<(), DeviceError>) {
-        let Some(pending) = self.pending.remove(&id) else {
-            return;
-        };
-        let response = match result {
-            Ok(()) => {
-                for write in &pending.writes {
-                    self.snapshot.record_write(write);
-                }
-                Response::Done
-            }
-            Err(error) => Response::Error(device_error(&error)),
-        };
-        if let Some(reply) = pending.reply {
-            let _ = reply.send(response);
-        }
-        if self.pending.is_empty() {
-            self.run_deferred_saves();
-        }
-        self.apply_if_wanted();
-    }
-
-    fn run_deferred_saves(&mut self) {
-        for save in std::mem::take(&mut self.deferred_saves) {
-            let response = self.save_profile(&save.name);
-            respond(&save.reply, response);
-        }
-    }
-
-    fn apply_if_wanted(&mut self) {
-        if self.apply_wanted && self.pending.is_empty() {
-            self.apply_wanted = false;
-            self.apply_active();
-        }
     }
 
     fn send_writes(&mut self, writes: Vec<DeviceWrite>, reply: Option<Sender<Response>>) {
@@ -615,14 +524,6 @@ impl Controller {
         )
     }
 
-    fn save_profile_when_idle(&mut self, name: String, reply: Sender<Response>) {
-        if self.is_connected() && !self.pending.is_empty() {
-            self.deferred_saves.push(DeferredSave { name, reply });
-        } else {
-            respond(&reply, self.save_profile(&name));
-        }
-    }
-
     fn save_profile(&mut self, name: &str) -> Response {
         if !self.is_connected() {
             return Response::Error(self.not_connected());
@@ -645,21 +546,6 @@ impl Controller {
             }
             Err(error) => Response::Error(error),
         }
-    }
-}
-
-fn headset_settings_known(snapshot: &DeviceSnapshot) -> bool {
-    snapshot.sidetone.is_some() && snapshot.balance.is_some() && snapshot.noise_gate.is_some()
-}
-
-fn fill_missing(saved: ProfileSettings, captured: ProfileSettings) -> ProfileSettings {
-    ProfileSettings {
-        sidetone_percent: saved.sidetone_percent.or(captured.sidetone_percent),
-        balance: saved.balance.or(captured.balance),
-        noise_gate: saved.noise_gate.or(captured.noise_gate),
-        headphone_eq: saved.headphone_eq.or(captured.headphone_eq),
-        mic_eq: saved.mic_eq.or(captured.mic_eq),
-        stream_mix: saved.stream_mix.or(captured.stream_mix),
     }
 }
 
