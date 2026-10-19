@@ -73,7 +73,8 @@ fn launcher_does_not_start_a_second_window() {
     fs::write(
         &script,
         format!(
-            "#!/bin/sh\necho start >> '{log}'\nwhile [ ! -e '{stop}' ]; do sleep 0.02; done\necho end >> '{log}'\n",
+            "#!/bin/sh\necho start >> '{log}'\nwhile [ -d '{dir}' ] && [ ! -e '{stop}' ]; do sleep 0.02; done\necho end >> '{log}'\n",
+            dir = dir.path().display(),
             log = log.display(),
             stop = stop.display(),
         ),
