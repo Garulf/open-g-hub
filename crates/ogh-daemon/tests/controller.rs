@@ -852,3 +852,50 @@ fn default_profile_is_completed_once_the_headset_reports_its_settings() {
     );
     harness.finish();
 }
+
+#[test]
+fn hand_edited_audio_names_reach_the_auto_switch_at_the_next_change() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("config.toml");
+    let mut store = Store::open(&path);
+    store.save_profile("fps", sidetone_profile(50)).unwrap();
+    let (devices, _device) = unbounded();
+    let (commands, command_rx) = unbounded();
+    let (inputs, input_rx) = unbounded();
+    let controller = Controller::new(store, devices, Instant::now).with_auto_switch(commands);
+    let thread = thread::spawn(move || controller.run(input_rx));
+    let request = |request: Request| {
+        let (reply, response) = unbounded();
+        inputs.send(Input::Ipc { request, reply }).unwrap();
+        response.recv_timeout(WAIT).expect("a reply")
+    };
+    assert_eq!(
+        command_rx.recv_timeout(WAIT),
+        Ok(Command::Configure(AudioSwitchConfig::default()))
+    );
+
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("A50 X Mic", "Desk Mic");
+    std::fs::write(&path, text).unwrap();
+    assert_eq!(
+        request(Request::LinkApp {
+            profile: "fps".to_string(),
+            app: "cs2.exe".to_string(),
+        }),
+        Response::Done
+    );
+    assert_eq!(
+        command_rx.recv_timeout(WAIT),
+        Ok(Command::Configure(AudioSwitchConfig {
+            mic_input: "Desk Mic".to_string(),
+            ..AudioSwitchConfig::default()
+        }))
+    );
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("Desk Mic"), "{saved}");
+    assert!(saved.contains("cs2.exe"), "{saved}");
+
+    drop(inputs);
+    thread.join().unwrap();
+}

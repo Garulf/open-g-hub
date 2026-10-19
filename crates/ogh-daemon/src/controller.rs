@@ -517,13 +517,10 @@ impl Controller {
             Request::UnlinkApp { app } => {
                 respond(&reply, self.mutate_store(|store| store.unlink_app(&app)))
             }
-            Request::SetAutoSwitch { enabled } => {
-                let response = self.mutate_store(|store| store.set_audio_switch(enabled));
-                if matches!(response, Response::Done) {
-                    self.configure_auto_switch();
-                }
-                respond(&reply, response);
-            }
+            Request::SetAutoSwitch { enabled } => respond(
+                &reply,
+                self.mutate_store(|store| store.set_audio_switch(enabled)),
+            ),
             Request::Subscribe => respond(
                 &reply,
                 Response::Error(IpcError {
@@ -634,6 +631,8 @@ impl Controller {
         self.mutate_store(|store| store.save_profile(name, settings))
     }
 
+    /// The store re-reads the file before each change, so hand-edited audio
+    /// switch names are passed on here too.
     fn mutate_store(
         &mut self,
         change: impl FnOnce(&mut Store) -> Result<(), IpcError>,
@@ -641,6 +640,7 @@ impl Controller {
         match change(&mut self.store) {
             Ok(()) => {
                 self.refresh_active();
+                self.configure_auto_switch();
                 Response::Done
             }
             Err(error) => Response::Error(error),

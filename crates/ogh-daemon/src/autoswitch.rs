@@ -76,12 +76,18 @@ impl AutoSwitch {
         self.outcome()
     }
 
+    /// New names while switched move the defaults to the new targets; the
+    /// defaults remembered before the first switch stay the ones restored.
     pub fn configure(&mut self, config: AudioSwitchConfig) -> AudioSwitchOutcome {
         let was_enabled = self.config.enabled;
+        let renamed = !same_targets(&self.config, &config);
         self.config = config;
         if was_enabled && !self.config.enabled {
             self.restore();
-        } else if !was_enabled && self.config.enabled && self.previous == Headset::InUse {
+        } else if self.config.enabled
+            && self.previous == Headset::InUse
+            && (!was_enabled || renamed)
+        {
             self.switch();
         }
         self.outcome()
@@ -191,6 +197,10 @@ impl AutoSwitch {
     fn persist(&self) -> io::Result<()> {
         save_remembered(&self.state_file, &self.remembered)
     }
+}
+
+fn same_targets(a: &AudioSwitchConfig, b: &AudioSwitchConfig) -> bool {
+    a.game_output == b.game_output && a.voice_output == b.voice_output && a.mic_input == b.mic_input
 }
 
 fn save_failure(error: &io::Error) -> String {

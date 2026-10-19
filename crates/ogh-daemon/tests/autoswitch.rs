@@ -523,3 +523,32 @@ fn disabling_with_nothing_remembered_clears_a_previous_error() {
         ok(false)
     );
 }
+
+#[test]
+fn new_names_while_in_use_switch_again_and_keep_the_originals() {
+    let rig = Rig::new();
+    rig.fake.0.lock().unwrap().endpoints.insert(
+        (Direction::Render, "Desk Amp".to_string()),
+        "desk-amp".to_string(),
+    );
+    let mut auto_switch = rig.auto_switch(enabled());
+    auto_switch.on_headset(Headset::InUse);
+    rig.fake.clear_sets();
+
+    let renamed = AudioSwitchConfig {
+        game_output: "Desk Amp".to_string(),
+        ..enabled()
+    };
+    assert_eq!(auto_switch.configure(renamed.clone()), ok(true));
+    let current = rig.fake.current();
+    assert_eq!(current[&RENDER_CONSOLE], "desk-amp");
+    assert_eq!(current[&RENDER_MULTIMEDIA], "desk-amp");
+    assert_eq!(current[&RENDER_COMMUNICATIONS], "a50-voice");
+
+    rig.fake.clear_sets();
+    assert_eq!(auto_switch.configure(renamed), ok(true));
+    assert!(rig.fake.sets().is_empty(), "unchanged names switch nothing");
+
+    assert_eq!(auto_switch.on_headset(Headset::Docked), ok(false));
+    assert_eq!(rig.fake.current(), original_defaults());
+}

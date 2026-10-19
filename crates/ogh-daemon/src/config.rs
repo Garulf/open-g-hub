@@ -66,7 +66,7 @@ pub enum Loaded {
 pub fn load(path: &Path) -> Loaded {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Loaded::Missing,
+        Err(e) if is_absent(&e) => return Loaded::Missing,
         Err(e) => return Loaded::Unreadable(format!("{}: {e}", path.display())),
     };
     match toml::from_str::<Config>(&text) {
@@ -79,6 +79,14 @@ pub fn load(path: &Path) -> Loaded {
         }
         Err(e) => Loaded::Unreadable(format!("{}: {e}", path.display())),
     }
+}
+
+/// A parent that is a file also means there is no config file.
+fn is_absent(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    )
 }
 
 pub fn save(path: &Path, config: &Config) -> io::Result<()> {
@@ -153,6 +161,20 @@ impl Store {
             path: path.to_path_buf(),
             config,
             load_error,
+        }
+    }
+
+    fn reload(&mut self) {
+        match load(&self.path) {
+            Loaded::Ok(config) => {
+                self.config = config;
+                self.load_error = None;
+            }
+            Loaded::Missing => {
+                self.config = Config::default();
+                self.load_error = None;
+            }
+            Loaded::Unreadable(message) => self.load_error = Some(message),
         }
     }
 
@@ -246,10 +268,13 @@ impl Store {
         })
     }
 
+    /// Re-reads the file first, so hand edits made while the daemon runs
+    /// are kept, and a file that no longer parses is never overwritten.
     fn mutate(
         &mut self,
         change: impl FnOnce(&mut Config) -> Result<(), IpcError>,
     ) -> Result<(), IpcError> {
+        self.reload();
         self.config()?;
         let mut next = self.config.clone();
         change(&mut next)?;

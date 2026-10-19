@@ -319,3 +319,76 @@ fn paths_for_current_user_use_the_app_name() {
     assert!(paths.log_file.ends_with("daemon.log"));
     assert!(paths.config_file.to_string_lossy().contains("open-g-hub"));
 }
+
+#[test]
+fn hand_edit_between_two_changes_survives_the_second() {
+    let dir = TempDir::new().unwrap();
+    let path = config_path(&dir);
+    let mut store = Store::open(&path);
+    store
+        .save_profile("fps", ProfileSettings::default())
+        .unwrap();
+
+    let mut edited = match load(&path) {
+        Loaded::Ok(config) => config,
+        other => panic!("expected a config, got {other:?}"),
+    };
+    edited.audio_switch.game_output = "Speakers".to_string();
+    edited
+        .profiles
+        .insert("music".to_string(), Default::default());
+    save(&path, &edited).unwrap();
+
+    store.link_app("fps", "cs2.exe").unwrap();
+
+    let Loaded::Ok(on_disk) = load(&path) else {
+        panic!("the file should load");
+    };
+    assert_eq!(on_disk.audio_switch.game_output, "Speakers");
+    assert!(on_disk.profiles.contains_key("music"));
+    assert_eq!(on_disk.profiles["fps"].apps, vec!["cs2.exe".to_string()]);
+    assert_eq!(store.config().unwrap(), &on_disk);
+}
+
+#[test]
+fn file_broken_while_running_is_not_overwritten_until_fixed() {
+    let dir = TempDir::new().unwrap();
+    let path = config_path(&dir);
+    let mut store = Store::open(&path);
+    store
+        .save_profile("fps", ProfileSettings::default())
+        .unwrap();
+    let good = fs::read_to_string(&path).unwrap();
+
+    fs::write(&path, "default_profile = [").unwrap();
+    assert_eq!(
+        kind(store.set_audio_switch(true)),
+        ErrorKind::ConfigUnavailable
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), "default_profile = [");
+    assert!(store.config_error().unwrap().contains("line 1"));
+
+    fs::write(&path, &good).unwrap();
+    store.set_audio_switch(true).unwrap();
+    assert_eq!(store.config_error(), None);
+    assert!(store.config().unwrap().audio_switch.enabled);
+    assert!(store.config().unwrap().profiles.contains_key("fps"));
+}
+
+#[test]
+fn file_deleted_while_running_starts_again_from_defaults() {
+    let dir = TempDir::new().unwrap();
+    let path = config_path(&dir);
+    let mut store = Store::open(&path);
+    store
+        .save_profile("fps", ProfileSettings::default())
+        .unwrap();
+    fs::remove_file(&path).unwrap();
+
+    store.set_audio_switch(true).unwrap();
+    let Loaded::Ok(on_disk) = load(&path) else {
+        panic!("the file should load");
+    };
+    assert!(!on_disk.profiles.contains_key("fps"));
+    assert!(on_disk.audio_switch.enabled);
+}
