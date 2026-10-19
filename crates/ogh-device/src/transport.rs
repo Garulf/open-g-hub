@@ -230,7 +230,7 @@ mod tests {
         fs::write(&locked, b"").unwrap();
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
         let running_as_root = fs::File::open(&locked).is_ok();
-        let api = HidApi::new_without_enumerate().unwrap();
+        let api = HidApi::new().unwrap();
         let path = CString::new(locked.to_str().unwrap()).unwrap();
 
         let refusal = api.open_path(&path).err();
