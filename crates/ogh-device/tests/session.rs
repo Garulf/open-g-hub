@@ -452,6 +452,174 @@ fn set_custom_eq_to_the_custom_slot_is_sent() {
     assert_eq!(device.writes().last(), Some(&ghub_write));
 }
 
+const SESSION_B_SETTINGS: [&str; 4] = [
+    "session-b/mixer",
+    "session-b/small-settings",
+    "session-b/eq-headphone",
+    "session-b/eq-mic",
+];
+const OUR_SW_ID: u8 = 0x0b;
+
+fn params_at(name: &str, line: usize) -> Vec<u8> {
+    let frame = frame_at(name, line);
+    frame[6..usize::from(frame[2]) + 3].to_vec()
+}
+
+fn with_our_sw_id(mut frame: [u8; 64]) -> [u8; 64] {
+    frame[5] = frame[5] & 0xf0 | OUR_SW_ID;
+    frame
+}
+
+fn empty_reply_to(request: &[u8; 64]) -> [u8; 64] {
+    frame_from_hex(&format!("020c0300{:02x}{:02x}", request[4], request[5]))
+}
+
+#[test]
+fn every_call_ghub_sent_in_session_b_settings_passes_the_rules() {
+    let (mut session, device) = open_scripted();
+    for name in SESSION_B_SETTINGS {
+        let transfers = load(name);
+        let ids = feature_ids(&transfers);
+        for transfer in transfers.iter().filter(|t| t.dir == common::Dir::Out) {
+            let ours = with_our_sw_id(transfer.frame);
+            let id = ids[&ours[4]];
+            let function = ours[5] >> 4;
+            device.push_frame(empty_reply_to(&ours));
+
+            let result = session.request(id, function, &params_at(name, transfer.line));
+
+            assert_eq!(result, Ok(vec![]), "{name} line {}", transfer.line);
+            assert_eq!(
+                device.writes().last(),
+                Some(&ours),
+                "{name} line {}",
+                transfer.line
+            );
+        }
+    }
+}
+
+fn assert_all_refused(id: FeatureId, function: u8, cases: &[Vec<u8>]) {
+    let (mut session, device) = open_scripted();
+    for params in cases {
+        assert_refused_without_writing(&mut session, &device, id, function, params);
+    }
+}
+
+fn changed(mut params: Vec<u8>, at: usize, byte: u8) -> Vec<u8> {
+    params[at] = byte;
+    params
+}
+
+fn resized(mut params: Vec<u8>, len: usize) -> Vec<u8> {
+    params.resize(len, 0);
+    params
+}
+
+#[test]
+fn off_shape_custom_eq_writes_are_refused_without_writing() {
+    let headphone = params_at("session-b/eq-headphone", 72);
+    let mic = params_at("session-b/eq-mic", 79);
+    assert_all_refused(
+        FeatureId::ADVANCED_PARA_EQ,
+        2,
+        &[
+            changed(headphone.clone(), 1, 2),
+            changed(headphone.clone(), 0, 2),
+            changed(headphone.clone(), 2, 1),
+            resized(headphone.clone(), 52),
+            resized(headphone.clone(), 54),
+            changed(changed(headphone.clone(), 6, 0), 7, 0xf1),
+            changed(changed(headphone.clone(), 3, 0x00), 4, 0x13),
+            changed(changed(headphone.clone(), 3, 0x4e), 4, 0x21),
+            changed(changed(mic.clone(), 3, 0x00), 4, 0x3b),
+            changed(changed(mic.clone(), 3, 0x4e), 4, 0x21),
+            changed(mic, 0, 2),
+            [&headphone[..], &headphone[3..8]].concat(),
+        ],
+    );
+}
+
+#[test]
+fn off_shape_mixer_writes_are_refused_without_writing() {
+    let ghub = params_at("session-b/mixer", 38);
+    assert_all_refused(
+        FeatureId::MIXER_AUDIO,
+        6,
+        &[
+            resized(ghub.clone(), 15),
+            resized(ghub.clone(), 17),
+            changed(ghub.clone(), 0, 1),
+            changed(ghub.clone(), 3, 3),
+            changed(changed(ghub.clone(), 4, 1), 7, 0),
+            changed(ghub.clone(), 1, 0x21),
+            changed(ghub.clone(), 8, 0x21),
+            changed(ghub.clone(), 2, 2),
+            changed(ghub.clone(), 15, 2),
+            [&ghub[..], &[0x04, 0x10, 0x00]].concat(),
+        ],
+    );
+}
+
+#[test]
+fn off_shape_volume_writes_are_refused_without_writing() {
+    assert_all_refused(
+        FeatureId::VOLUME_SET,
+        1,
+        &[
+            vec![0x15],
+            vec![0xfe, 0x15],
+            vec![0xff, 0x16],
+            vec![0xff, 0x15, 0x00],
+            vec![],
+        ],
+    );
+}
+
+#[test]
+fn off_shape_brightness_writes_are_refused_without_writing() {
+    assert_all_refused(
+        FeatureId::LED_BRIGHTNESS,
+        1,
+        &[vec![101], vec![0xff], vec![50, 0], vec![]],
+    );
+}
+
+#[test]
+fn off_shape_sleep_timer_writes_are_refused_without_writing() {
+    assert_all_refused(
+        FeatureId::AUTO_SLEEP,
+        1,
+        &[
+            vec![0x1e],
+            vec![0x3b, 0x1e],
+            vec![0x00, 0x0f],
+            vec![0x3c, 20],
+            vec![0x3c, 60],
+            vec![0x3c, 0x1e, 0x00],
+            vec![],
+        ],
+    );
+}
+
+#[test]
+fn off_shape_tones_writes_are_refused_without_writing() {
+    assert_all_refused(
+        FeatureId::HEADSET_TONES,
+        1,
+        &[vec![3], vec![0xff], vec![1, 1], vec![]],
+    );
+}
+
+#[test]
+fn off_shape_noise_gate_writes_are_refused_without_writing() {
+    assert_all_refused(
+        FeatureId::MIXER_MIC,
+        2,
+        &[vec![3], vec![5], vec![0xff], vec![1, 1], vec![]],
+    );
+}
+
 #[test]
 fn missing_feature_is_reported_without_writing() {
     let (mut session, device) = open_scripted();
