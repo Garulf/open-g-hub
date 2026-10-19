@@ -116,15 +116,26 @@ impl Server {
 pub struct Connection {
     reader: BufReader<RecvHalf>,
     writer: Arc<Mutex<SendHalf>>,
+    closer: Option<ConnectionCloser>,
 }
 
 impl Connection {
     fn new(stream: Stream) -> Connection {
+        let closer = platform::closer(&stream).map(|inner| ConnectionCloser {
+            inner: Arc::new(inner),
+        });
         let (recv, send) = stream.split();
         Connection {
             reader: BufReader::new(recv),
             writer: Arc::new(Mutex::new(send)),
+            closer,
         }
+    }
+
+    /// A handle that ends the connection from any thread, even while another thread is
+    /// blocked reading or writing it. `None` when the platform could not provide one.
+    pub fn closer(&self) -> Option<ConnectionCloser> {
+        self.closer.clone()
     }
 
     pub fn send<T: Serialize>(&mut self, value: &T) -> io::Result<()> {
@@ -142,6 +153,18 @@ impl Connection {
         Ok(ConnectionWriter {
             writer: Arc::clone(&self.writer),
         })
+    }
+}
+
+#[derive(Clone)]
+pub struct ConnectionCloser {
+    inner: Arc<platform::Closer>,
+}
+
+impl ConnectionCloser {
+    /// The peer sees the connection end, and blocked reads and writes on it fail.
+    pub fn close(&self) {
+        self.inner.close();
     }
 }
 
@@ -246,6 +269,22 @@ mod platform {
 
     use super::{Endpoint, TransportError, connect_error};
 
+    pub(super) struct Closer(std::os::unix::net::UnixStream);
+
+    impl Closer {
+        pub(super) fn close(&self) {
+            let _ = self.0.shutdown(std::net::Shutdown::Both);
+        }
+    }
+
+    /// A duplicate descriptor refers to the same socket, so shutting it down ends the
+    /// connection for every other holder.
+    pub(super) fn closer(stream: &Stream) -> Option<Closer> {
+        match stream {
+            Stream::UdSocket(socket) => socket.inner().try_clone().ok().map(Closer),
+        }
+    }
+
     const PRIVATE_DIR_NAME: &str = "open-g-hub";
 
     pub(super) type Guard = Option<File>;
@@ -340,9 +379,30 @@ mod platform {
 mod platform {
     use std::io;
 
-    use interprocess::local_socket::ListenerOptions;
+    use std::os::windows::io::{AsRawHandle, OwnedHandle};
+
+    use interprocess::local_socket::{ListenerOptions, Stream};
+    use windows_sys::Win32::System::Pipes::DisconnectNamedPipe;
 
     use super::{Endpoint, TransportError};
+
+    pub(super) struct Closer(OwnedHandle);
+
+    impl Closer {
+        pub(super) fn close(&self) {
+            unsafe {
+                DisconnectNamedPipe(self.0.as_raw_handle());
+            }
+        }
+    }
+
+    /// The pipes are overlapped, so disconnecting from another thread fails the reads and
+    /// writes still pending on them.
+    pub(super) fn closer(stream: &Stream) -> Option<Closer> {
+        use std::os::windows::io::AsHandle;
+        let Stream::NamedPipe(pipe) = stream;
+        pipe.as_handle().try_clone_to_owned().ok().map(Closer)
+    }
 
     pub(super) struct Guard;
 

@@ -498,6 +498,7 @@ dependencies = [
  "interprocess",
  "serde",
  "serde_json",
+ "windows-sys",
 ]
 
 [[package]]

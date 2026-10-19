@@ -133,7 +133,9 @@ fn forward(connection: &mut Connection, inputs: &Sender<Input>, request: Request
 
 /// After the reply the connection only carries notifications. Dropping `closed` when the
 /// client goes away stops the forwarder, which drops the receiver and gets the controller to
-/// prune this subscriber on its next send.
+/// prune this subscriber on its next send. When the forwarder stops first, because the
+/// controller dropped a subscriber that fell behind, it closes the connection so the client
+/// sees the end instead of a silent stream.
 fn subscribe(mut connection: Connection, inputs: &Sender<Input>) {
     let (notify, notifications) = bounded(SUBSCRIBER_QUEUE);
     if inputs.send(Input::Subscribe(notify)).is_err() {
@@ -150,8 +152,14 @@ fn subscribe(mut connection: Connection, inputs: &Sender<Input>) {
     if connection.send(&Response::Done).is_err() {
         return;
     }
+    let closer = connection.closer();
     let (closed_tx, closed) = bounded::<()>(0);
-    thread::spawn(move || forward_notifications(writer, notifications, closed));
+    thread::spawn(move || {
+        forward_notifications(writer, notifications, closed);
+        if let Some(closer) = closer {
+            closer.close();
+        }
+    });
     while !matches!(next_ignoring_requests(&mut connection), Next::Close) {}
     drop(closed_tx);
 }

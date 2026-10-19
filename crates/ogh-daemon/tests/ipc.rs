@@ -12,10 +12,10 @@ use ogh_daemon::controller::{Controller, Input};
 use ogh_daemon::device_worker::{DeviceCommand, DeviceUpdate};
 use ogh_daemon::ipc_server;
 use ogh_daemon::snapshot::DeviceSnapshot;
-use ogh_device::{FeatureId, FeatureInfo};
+use ogh_device::{Event, FeatureId, FeatureInfo};
 use ogh_ipc::{
-    Client, Connection, Endpoint, ErrorKind, IPC_VERSION, MAX_LINE_BYTES, Notification, Request,
-    Response, Server, Setting, Status, Subscription, read_line,
+    Client, CodecError, Connection, Endpoint, ErrorKind, IPC_VERSION, MAX_LINE_BYTES, Notification,
+    Request, Response, Server, Setting, Status, Subscription, read_line,
 };
 use ogh_protocol::features::sidetone::Sidetone;
 use tempfile::TempDir;
@@ -292,6 +292,43 @@ fn client_disconnect_mid_subscription_does_not_stop_the_server() {
         client.call(&Request::Status).unwrap(),
         Response::Status(_)
     ));
+}
+
+#[test]
+fn a_subscription_the_controller_dropped_ends_in_eof() {
+    const CHANGES: usize = 3000;
+    let daemon = Daemon::start();
+    daemon.connect_device(0);
+    let mut stalled = daemon.raw();
+    stalled.hello();
+    stalled.send_line(r#"{"cmd":"subscribe"}"#);
+    assert_eq!(stalled.reply(), Response::Done);
+
+    for change in 0..CHANGES {
+        let level = Sidetone(1 + (change % 2) as u8);
+        daemon
+            .inputs
+            .send(Input::Device(DeviceUpdate::Event(Event::Sidetone(level))))
+            .unwrap();
+    }
+
+    let mut received = 0;
+    loop {
+        match read_line::<_, Notification>(&mut stalled.reader) {
+            Ok(Some(_)) => received += 1,
+            Ok(None) => break,
+            Err(CodecError::Io(e))
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                panic!("the connection stayed open after {received} notifications")
+            }
+            Err(_) => break,
+        }
+    }
+    assert!(received < CHANGES, "{received} notifications, none dropped");
 }
 
 #[test]

@@ -577,7 +577,7 @@ fn a_subscriber_that_stops_reading_is_dropped() {
             Err(RecvTimeoutError::Timeout) => panic!("the controller still holds the sender"),
         }
     }
-    assert!(received <= SUBSCRIBER_QUEUE, "{received} notifications");
+    assert_eq!(received, SUBSCRIBER_QUEUE);
     harness.finish();
 }
 
