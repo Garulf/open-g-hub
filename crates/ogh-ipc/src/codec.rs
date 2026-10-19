@@ -38,6 +38,7 @@ pub fn write_line<W: Write, T: Serialize>(w: &mut W, value: &T) -> io::Result<()
     w.flush()
 }
 
+/// After any `CodecError` the stream may be desynchronised; drop it instead of reading again.
 pub fn read_line<R: BufRead, T: DeserializeOwned>(r: &mut R) -> Result<Option<T>, CodecError> {
     let mut buf = Vec::new();
     let read = r
