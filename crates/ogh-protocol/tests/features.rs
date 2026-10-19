@@ -721,7 +721,7 @@ fn mixer_level_above_max_is_rejected() {
     assert_eq!(mixer_audio::set_request(MIXER_AUDIO, &mix), Err(too_loud));
 
     let mut mix = launch_mix();
-    mix.input_mut(MixInput::Bluetooth).level = MixLevel(33);
+    mix.input_mut(MixInput::Game).level = MixLevel(33);
     assert_eq!(mixer_audio::set_request(MIXER_AUDIO, &mix), Err(too_loud));
 
     let mut mix = launch_mix();
@@ -1248,6 +1248,120 @@ fn decoded_eq_gains_equal_the_decimal_values() {
         assert_eq!(
             custom.equalizer.bands[band].gain_db, gain_db,
             "{fixture} line {line}"
+        );
+    }
+}
+
+#[test]
+fn mic_out_and_bluetooth_are_pinned_to_the_captured_bytes() {
+    assert_eq!(
+        mixer_audio::PINNED_INPUT,
+        MixChannel {
+            level: MixLevel(0x10),
+            muted: true
+        }
+    );
+    assert!(MixInput::MicOut.is_pinned());
+    assert!(MixInput::Bluetooth.is_pinned());
+    assert!(!MixInput::Game.is_pinned());
+    assert!(!MixInput::Voice.is_pinned());
+    assert_eq!(
+        launch_mix().input(MixInput::MicOut),
+        mixer_audio::PINNED_INPUT
+    );
+
+    let mut mix = launch_mix();
+    *mix.input_mut(MixInput::MicOut) = channel(100, false);
+    assert_eq!(
+        mixer_audio::set_request(MIXER_AUDIO, &mix),
+        Err(RangeError {
+            what: "Mic Out level (pinned)",
+            value: 32.0,
+            allowed: Allowed::OneOf(&[0x10])
+        })
+    );
+
+    for changed in [channel(50, false), channel(0, true), channel(100, true)] {
+        for input in [MixInput::MicOut, MixInput::Bluetooth] {
+            let mut mix = launch_mix();
+            *mix.input_mut(input) = changed;
+            assert!(
+                mixer_audio::set_request(MIXER_AUDIO, &mix).is_err(),
+                "{input:?} {changed:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn eq_cards_mixing_graphic_and_parametric_bands_are_rejected() {
+    let mut parametric = HEADPHONE_DEFAULT;
+    parametric.bands[4].q = None;
+    assert_eq!(
+        eq_rejection(EqInstance::Headphone, &parametric),
+        RangeError {
+            what: "EQ Q",
+            value: 0.0,
+            allowed: Allowed::Between {
+                min: 0.031,
+                max: 7.969
+            }
+        }
+    );
+
+    let mut graphic_card = graphic(HEADPHONE_DEFAULT);
+    graphic_card.bands[4].q = Some(0.6875);
+    assert_eq!(
+        eq_rejection(EqInstance::Headphone, &graphic_card),
+        RangeError {
+            what: "EQ Q on a graphic card",
+            value: 0.6875,
+            allowed: Allowed::Between { min: 0.0, max: 0.0 }
+        }
+    );
+}
+
+#[test]
+fn eq_frequencies_must_ascend() {
+    for (band, freq_hz, previous) in [(1, 20, 20.0), (1, 19, 20.0), (9, 9999, 10000.0)] {
+        let error = eq_rejection(
+            EqInstance::Headphone,
+            &with_band(HEADPHONE_DEFAULT, band, freq_hz, 0.0),
+        );
+        assert_eq!(
+            error,
+            RangeError {
+                what: "EQ frequency (Hz)",
+                value: f32::from(freq_hz),
+                allowed: Allowed::Between {
+                    min: previous + 1.0,
+                    max: 20000.0
+                }
+            },
+            "band {band} at {freq_hz}"
+        );
+    }
+    let mut reversed = HEADPHONE_DEFAULT;
+    reversed.bands.reverse();
+    assert!(advanced_para_eq::set_custom_request(EQ, EqInstance::Headphone, &reversed).is_err());
+}
+
+#[test]
+fn eq_gain_off_the_grid_rounds_to_the_nearest_step() {
+    for (gain_db, raw) in [
+        (2.87, 177),
+        (2.88, 178),
+        (2.874, 177),
+        (2.876, 178),
+        (-0.01, 120),
+    ] {
+        let eq = with_band(HEADPHONE_DEFAULT, 5, 1000, gain_db);
+        let built = advanced_para_eq::set_custom_request(EQ, EqInstance::Headphone, &eq).unwrap();
+        let at = 3 + 5 * 5 + 3;
+        assert_eq!(
+            u16::from_be_bytes([built.params[at], built.params[at + 1]]),
+            raw,
+            "{gain_db} dB"
         );
     }
 }

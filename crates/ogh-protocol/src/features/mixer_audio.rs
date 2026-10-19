@@ -71,7 +71,24 @@ impl MixInput {
     pub fn index(self) -> u8 {
         self as u8
     }
+
+    /// Mic Out and Bluetooth were greyed out ("Disconnected") during the
+    /// capture, and G Hub only ever wrote `PINNED_INPUT` for them. Until a
+    /// capture shows G Hub changing them, they cannot be set; this also
+    /// keeps the headset mic out of the stream.
+    pub fn is_pinned(self) -> bool {
+        matches!(self, Self::MicOut | Self::Bluetooth)
+    }
 }
+
+/// The only channel bytes G Hub wrote for a pinned input: level 0x10 (50 %),
+/// muted.
+pub const PINNED_INPUT: MixChannel = MixChannel {
+    level: MixLevel(0x10),
+    muted: true,
+};
+const PINNED_LEVEL: &[u8] = &[PINNED_INPUT.level.0];
+const PINNED_MUTE: &[u8] = &[PINNED_INPUT.muted as u8];
 
 /// What G Hub's Routing page sets: the Stream Port output and the four
 /// inputs mixed into it, `inputs` in `MixInput` order. G Hub always wrote
@@ -94,17 +111,28 @@ impl StreamMix {
 }
 
 /// fn6 setMixerSettings: `00 <level> <mute> 04` then `<index> <level>
-/// <mute>` for each input.
+/// <mute>` for each input. Pinned inputs must hold `PINNED_INPUT`.
 pub fn set_request(feature_index: u8, mix: &StreamMix) -> Result<Message, RangeError> {
     let mut params = Vec::with_capacity(SETTINGS_LEN);
     params.push(STREAM_OUTPUT);
     push_channel(&mut params, mix.stream)?;
     params.push(INPUT_COUNT as u8);
     for input in MixInput::ALL {
+        check_pinned(input, mix.input(input))?;
         params.push(input.index());
         push_channel(&mut params, mix.input(input))?;
     }
     Ok(request(feature_index, SET_SETTINGS, &params))
+}
+
+fn check_pinned(input: MixInput, channel: MixChannel) -> Result<(), RangeError> {
+    let (level_what, mute_what) = match input {
+        MixInput::MicOut => ("Mic Out level (pinned)", "Mic Out mute (pinned)"),
+        MixInput::Bluetooth => ("Bluetooth level (pinned)", "Bluetooth mute (pinned)"),
+        MixInput::Game | MixInput::Voice => return Ok(()),
+    };
+    RangeError::check_one_of(level_what, channel.level.0, PINNED_LEVEL)?;
+    RangeError::check_one_of(mute_what, u8::from(channel.muted), PINNED_MUTE)
 }
 
 fn push_channel(params: &mut Vec<u8>, channel: MixChannel) -> Result<(), RangeError> {

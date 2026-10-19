@@ -1,4 +1,4 @@
-use crate::error::{ParseError, RangeError, require_len};
+use crate::error::{Allowed, ParseError, RangeError, require_len};
 use crate::frame::{Message, request};
 
 const SET_CUSTOM: u8 = 2;
@@ -113,8 +113,9 @@ pub const HEADPHONE_MEDIA: Equalizer = curated(
     HEADPHONE_FREQS,
     [4.0, 3.0, 2.0, -0.5, -0.5, 1.0, 2.0, 1.5, 0.5, -0.5],
 );
-/// Never picked in a capture. These are the bytes G Hub wrote for a new
-/// advanced mic card, which is how the headphone Default pick is written.
+/// GUESS: mic Default was never picked in a capture. The headphone Default
+/// pick and the other mic picks write their preset with Q 0x16, so this is
+/// taken to be the flat Q 0x16 card G Hub wrote at eq-mic line 29.
 pub const MIC_DEFAULT: Equalizer = curated(MIC_FREQS, [0.0; BAND_COUNT]);
 pub const MIC_BROADCAST: Equalizer = curated(
     MIC_FREQS,
@@ -126,34 +127,50 @@ pub const MIC_COMPETITION: Equalizer = curated(
 );
 
 /// fn2 setCustomEQ into the custom slot, the only call G Hub uses to change
-/// an EQ. Gains are rounded to the device's 0.05 dB grid and Q to 1/32.
+/// an EQ. The card takes the first band's mode: every band must then be
+/// graphic (`q: None`) or every band parametric, as in every captured card.
+/// Frequencies must rise strictly from band to band. Gains round to the
+/// nearest step of the device's 0.05 dB grid and Q to the nearest 1/32; how
+/// G Hub rounds a gain between grid points is unknown, so such a value may
+/// land one step away from what G Hub writes.
 pub fn set_custom_request(
     feature_index: u8,
     instance: EqInstance,
     equalizer: &Equalizer,
 ) -> Result<Message, RangeError> {
+    let graphic = equalizer.bands[0].q.is_none();
     let mut params = Vec::with_capacity(CARD_LEN);
     params.extend([instance as u8, CUSTOM_SLOT, LEADING_BYTE]);
+    let mut min_freq_hz = instance.min_freq_hz();
     for band in &equalizer.bands {
         RangeError::check_between(
             "EQ frequency (Hz)",
             f32::from(band.freq_hz),
-            f32::from(instance.min_freq_hz()),
+            f32::from(min_freq_hz),
             f32::from(MAX_FREQ_HZ),
         )?;
+        min_freq_hz = band.freq_hz.saturating_add(1);
         params.extend(band.freq_hz.to_be_bytes());
-        params.push(q_raw(band.q)?);
+        params.push(q_raw(graphic, band.q)?);
         params.extend(gain_raw(band.gain_db)?.to_be_bytes());
     }
     Ok(request(feature_index, SET_CUSTOM, &params))
 }
 
-fn q_raw(q: Option<f32>) -> Result<u8, RangeError> {
-    let Some(q) = q else {
-        return Ok(GRAPHIC_Q);
-    };
-    RangeError::check_between("EQ Q", q, MIN_Q, MAX_Q)?;
-    Ok((q * Q_STEPS).round() as u8)
+fn q_raw(graphic: bool, q: Option<f32>) -> Result<u8, RangeError> {
+    match (graphic, q) {
+        (true, None) => Ok(GRAPHIC_Q),
+        (true, Some(q)) => Err(RangeError {
+            what: "EQ Q on a graphic card",
+            value: q,
+            allowed: Allowed::Between { min: 0.0, max: 0.0 },
+        }),
+        (false, q) => {
+            let q = q.unwrap_or(0.0);
+            RangeError::check_between("EQ Q", q, MIN_Q, MAX_Q)?;
+            Ok((q * Q_STEPS).round() as u8)
+        }
+    }
 }
 
 fn gain_raw(gain_db: f32) -> Result<u16, RangeError> {
