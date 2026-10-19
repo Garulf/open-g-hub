@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsString;
-use std::fs::{self, File};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::thread;
 
@@ -11,6 +10,7 @@ use ogh_ipc::Headset;
 use serde::{Deserialize, Serialize};
 
 use crate::config::AudioSwitchConfig;
+use crate::fs_util::write_atomic;
 
 /// What the last audio action left behind.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -107,7 +107,10 @@ impl AutoSwitch {
                 .iter()
                 .filter_map(|slot| Some((*slot, current.get(slot)?.clone())))
                 .collect();
-            self.persist();
+            if let Err(e) = self.persist() {
+                self.remembered.clear();
+                return Err(save_failure(&e));
+            }
         }
         let failures: Vec<String> = slots
             .iter()
@@ -167,10 +170,11 @@ impl AutoSwitch {
 
     fn restore(&mut self) {
         if self.remembered.is_empty() {
+            self.error = None;
             return;
         }
         let slots = self.router.slots();
-        let failures: Vec<String> = std::mem::take(&mut self.remembered)
+        let mut failures: Vec<String> = std::mem::take(&mut self.remembered)
             .into_iter()
             .filter(|(slot, _)| slots.contains(slot))
             .filter_map(|(slot, endpoint)| {
@@ -178,15 +182,19 @@ impl AutoSwitch {
                 Some(format!("could not restore {slot}: {failure}"))
             })
             .collect();
-        self.persist();
+        if let Err(e) = self.persist() {
+            failures.push(save_failure(&e));
+        }
         self.error = failures_to_result(failures).err();
     }
 
-    fn persist(&self) {
-        if let Err(e) = save_remembered(&self.state_file, &self.remembered) {
-            tracing::warn!("cannot save {}: {e}", self.state_file.display());
-        }
+    fn persist(&self) -> io::Result<()> {
+        save_remembered(&self.state_file, &self.remembered)
     }
+}
+
+fn save_failure(error: &io::Error) -> String {
+    format!("could not save audio state: {error}")
 }
 
 fn failures_to_result(failures: Vec<String>) -> Result<(), String> {
@@ -220,24 +228,7 @@ fn save_remembered(path: &Path, remembered: &Defaults) -> io::Result<()> {
         remembered: remembered.clone(),
     };
     let text = toml::to_string_pretty(&state).map_err(io::Error::other)?;
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
-    if let Some(parent) = parent {
-        fs::create_dir_all(parent)?;
-    }
-    let mut tmp_name = path
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no file name"))?
-        .to_os_string();
-    tmp_name.push(OsString::from(".tmp"));
-    let tmp = path.with_file_name(tmp_name);
-    let mut file = File::create(&tmp)?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(&tmp, path)?;
-    #[cfg(unix)]
-    File::open(parent.unwrap_or(Path::new(".")))?.sync_all()?;
-    Ok(())
+    write_atomic(path, &text)
 }
 
 /// Runs an `AutoSwitch` on its own thread so the OS audio calls stay off the

@@ -3,6 +3,7 @@ pub mod config;
 pub mod controller;
 pub mod convert;
 pub mod device_worker;
+mod fs_util;
 pub mod ipc_server;
 pub mod logging;
 pub mod paths;

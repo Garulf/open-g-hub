@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
-use std::ffi::OsString;
-use std::fs::{self, File};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::fs_util::write_atomic;
 use ogh_ipc::{ErrorKind, IpcError, ProfileSettings};
 use serde::{Deserialize, Serialize};
 
@@ -83,24 +83,7 @@ pub fn load(path: &Path) -> Loaded {
 
 pub fn save(path: &Path, config: &Config) -> io::Result<()> {
     let text = toml::to_string_pretty(config).map_err(io::Error::other)?;
-    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
-    if let Some(parent) = parent {
-        fs::create_dir_all(parent)?;
-    }
-    let mut tmp_name = path
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "config path has no file name"))?
-        .to_os_string();
-    tmp_name.push(OsString::from(".tmp"));
-    let tmp = path.with_file_name(tmp_name);
-    let mut file = File::create(&tmp)?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(&tmp, path)?;
-    #[cfg(unix)]
-    File::open(parent.unwrap_or(Path::new(".")))?.sync_all()?;
-    Ok(())
+    write_atomic(path, &text)
 }
 
 fn error(kind: ErrorKind, message: impl Into<String>) -> IpcError {

@@ -100,7 +100,11 @@ impl AudioRouter for WindowsRouter {
             // SAFETY: `index` is below the count just read.
             let device = unsafe { devices.Item(index) }
                 .map_err(|e| failed("cannot read an audio device", &e))?;
-            if friendly_name(&device)?.to_lowercase().contains(&needle) {
+            // An endpoint whose name cannot be read is skipped, not fatal.
+            let Ok(name) = friendly_name(&device) else {
+                continue;
+            };
+            if name.to_lowercase().contains(&needle) {
                 return device_id(&device).map(Some);
             }
         }
@@ -154,9 +158,10 @@ fn device_id(device: &IMMDevice) -> Result<String, AudioError> {
 
 /// Copies a COM-allocated wide string and frees it.
 fn take_string(text: PWSTR) -> Result<String, AudioError> {
-    // SAFETY: `text` came from a COM call that returns a NUL-terminated string
-    // allocated for the caller to free with `CoTaskMemFree`, freed once here.
+    // SAFETY: `text` came from a COM call that returns a NUL-terminated string.
     let result = unsafe { text.to_string() };
+    // SAFETY: that string was allocated for the caller to free with
+    // `CoTaskMemFree`, and this is the only place it is freed.
     unsafe { CoTaskMemFree(Some(text.as_ptr().cast_const().cast())) };
     result.map_err(|e| AudioError::Failed(format!("audio device text is not valid: {e}")))
 }

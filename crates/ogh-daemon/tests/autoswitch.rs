@@ -437,3 +437,89 @@ fn a_malformed_state_file_counts_as_empty() {
     assert_eq!(auto_switch.on_headset(Headset::Docked), ok(false));
     assert!(rig.fake.sets().is_empty());
 }
+
+#[test]
+fn state_file_ignores_unknown_keys() {
+    let rig = Rig::new();
+    rig.auto_switch(enabled()).on_headset(Headset::InUse);
+    let text = format!("future = 1\n\n{}", rig.state_text());
+    fs::write(&rig.state_file, text).unwrap();
+
+    let mut restarted = rig.auto_switch(enabled());
+    assert_eq!(restarted.on_headset(Headset::Docked), ok(false));
+
+    assert_eq!(rig.fake.current(), original_defaults());
+}
+
+#[test]
+fn restore_clears_the_state_file() {
+    let rig = Rig::new();
+    let mut auto_switch = rig.auto_switch(enabled());
+    auto_switch.on_headset(Headset::InUse);
+
+    auto_switch.on_headset(Headset::Docked);
+
+    let state: toml::Table = rig.state_text().parse().unwrap();
+    let remembered = state.get("remembered").and_then(|v| v.as_table());
+    assert!(remembered.is_none_or(|table| table.is_empty()), "{state:?}");
+}
+
+#[test]
+fn failed_state_save_aborts_the_switch() {
+    let dir = TempDir::new().unwrap();
+    let blocker = dir.path().join("blocker");
+    fs::write(&blocker, "not a directory").unwrap();
+    let fake = Fake::with_a50x();
+    let mut auto_switch = AutoSwitch::new(fake.router(), enabled(), blocker.join("state.toml"));
+
+    let outcome = auto_switch.on_headset(Headset::InUse);
+
+    assert!(fake.sets().is_empty());
+    assert_eq!(fake.current(), original_defaults());
+    assert!(!outcome.active);
+    assert!(
+        error_of(&outcome).starts_with("could not save audio state"),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn failed_state_clear_is_reported_after_the_restore() {
+    let rig = Rig::new();
+    let mut auto_switch = rig.auto_switch(enabled());
+    auto_switch.on_headset(Headset::InUse);
+    fs::remove_dir_all(rig.state_file.parent().unwrap()).unwrap();
+    fs::write(rig.state_file.parent().unwrap(), "not a directory").unwrap();
+
+    let outcome = auto_switch.on_headset(Headset::Docked);
+
+    assert_eq!(rig.fake.current(), original_defaults());
+    assert!(!outcome.active);
+    assert!(
+        error_of(&outcome).starts_with("could not save audio state"),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn successful_dock_clears_a_previous_error() {
+    let rig = Rig::new();
+    rig.fake.forget_endpoint("A50 X Game");
+    let mut auto_switch = rig.auto_switch(enabled());
+    assert!(auto_switch.on_headset(Headset::InUse).error.is_some());
+
+    assert_eq!(auto_switch.on_headset(Headset::Docked), ok(false));
+}
+
+#[test]
+fn disabling_with_nothing_remembered_clears_a_previous_error() {
+    let rig = Rig::new();
+    rig.fake.forget_endpoint("A50 X Game");
+    let mut auto_switch = rig.auto_switch(enabled());
+    assert!(auto_switch.on_headset(Headset::InUse).error.is_some());
+
+    assert_eq!(
+        auto_switch.configure(AudioSwitchConfig::default()),
+        ok(false)
+    );
+}
