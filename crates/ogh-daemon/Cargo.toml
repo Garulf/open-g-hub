@@ -1,0 +1,22 @@
+[package]
+name = "ogh-daemon"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+
+[lib]
+name = "ogh_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ogh-daemon"
+path = "src/main.rs"
+
+[dependencies]
+directories = "6"
+ogh-ipc = { path = "../ogh-ipc" }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1"
+
+[dev-dependencies]
+tempfile = "3"
