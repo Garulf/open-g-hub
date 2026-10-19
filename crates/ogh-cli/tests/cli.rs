@@ -537,6 +537,46 @@ fn eq_gains_sends_a_graphic_card_on_the_instances_frequencies() {
 }
 
 #[test]
+fn eq_gains_on_the_headphones_use_their_frequencies_without_q() {
+    let outcome = run_with(
+        &[
+            "eq",
+            "headphone",
+            "gains",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "-1",
+            "-2",
+            "-3",
+            "-4",
+        ],
+        FakeDaemon::replying([Response::Done]),
+    );
+    outcome.result.as_ref().expect("gains succeed");
+    assert!(matches!(
+        outcome.requests[..],
+        [Request::Set {
+            setting: Setting::HeadphoneEq(_)
+        }]
+    ));
+    let expected: Vec<(u16, Option<f32>, f32)> = eq::HEADPHONE_DEFAULT
+        .bands
+        .iter()
+        .zip([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, -1.0, -2.0, -3.0, -4.0])
+        .map(|(band, gain_db)| (band.freq_hz, None, gain_db))
+        .collect();
+    assert_eq!(bands(&sent_eq(&outcome)), expected);
+    assert_eq!(
+        outcome.stdout,
+        "eq headphone gains 1 2 3 4 5 6 -1 -2 -3 -4\n"
+    );
+}
+
+#[test]
 fn eq_gains_needs_ten_values_in_range() {
     let nine = [
         "eq", "mic", "gains", "0", "0", "0", "0", "0", "0", "0", "0", "0",
@@ -681,6 +721,16 @@ fn profile_list_marks_the_default_and_lists_linked_apps() {
 }
 
 #[test]
+fn profile_list_with_no_profiles_prints_nothing() {
+    let outcome = run_with(
+        &["profile", "list"],
+        FakeDaemon::replying([Response::Profiles(vec![])]),
+    );
+    outcome.result.expect("list succeeds");
+    assert_eq!(outcome.stdout, "");
+}
+
+#[test]
 fn profile_list_json_prints_the_profiles() {
     let outcome = run_with(
         &["profile", "list", "--json"],
@@ -796,35 +846,33 @@ fn without_mix(connection: Connection) -> Status {
 #[test]
 fn mix_without_a_known_stream_mix_reports_the_connection() {
     let cases = [
-        (Connection::NotFound, 3),
-        (Connection::GhubRunning, 4),
+        (Connection::NotFound, 3, "base station not found"),
+        (Connection::GhubRunning, 4, "G Hub is running"),
         (
             Connection::AccessDenied {
                 message: "denied".into(),
             },
             5,
+            "access denied: denied",
         ),
         (
             Connection::Error {
                 message: "broken".into(),
             },
             5,
+            "error: broken",
         ),
-        (Connection::Connected, 5),
+        (Connection::Connected, 5, "stream mix is not known yet"),
     ];
-    for (connection, code) in cases {
+    for (connection, code, text) in cases {
         let outcome = run_with(
             &["mix", "game", "20"],
             FakeDaemon::replying([Response::Status(without_mix(connection.clone()))]),
         );
         assert_eq!(exit_code(&outcome), code, "{connection:?}");
+        assert!(message(&outcome).starts_with(text), "{connection:?}");
         assert_eq!(outcome.requests, [Request::Status]);
     }
-    let outcome = run_with(
-        &["mix", "game", "20"],
-        FakeDaemon::replying([Response::Status(without_mix(Connection::Connected))]),
-    );
-    assert_eq!(message(&outcome), "stream mix is not known yet");
 }
 
 fn watch_daemon(notifications: Vec<Result<Notification, TransportError>>) -> FakeDaemon {

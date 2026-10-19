@@ -17,3 +17,6 @@ clap = { version = "4", features = ["derive"] }
 ogh-ipc = { path = "../ogh-ipc" }
 ogh-protocol = { path = "../ogh-protocol" }
 serde_json = "1.0.154"
+
+[dev-dependencies]
+tempfile = "3"

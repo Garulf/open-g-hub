@@ -403,6 +403,14 @@ fn emit(out: &mut impl Write, text: &str) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Prints a table, or nothing at all when it has no rows.
+fn emit_rows(out: &mut impl Write, text: &str) -> Result<(), CliError> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    emit(out, text)
+}
+
 fn call(client: &mut impl Daemon, request: Request) -> Result<Response, CliError> {
     match client.call(&request)? {
         Response::Error(error) => Err(CliError::Daemon(error)),
@@ -430,7 +438,7 @@ fn read_status(client: &mut impl Daemon) -> Result<Status, CliError> {
 
 fn features(client: &mut impl Daemon, out: &mut impl Write) -> Result<(), CliError> {
     match call(client, Request::Features)? {
-        Response::Features(features) => emit(out, &output::features_table(&features)),
+        Response::Features(features) => emit_rows(out, &output::features_table(&features)),
         _ => Err(unexpected()),
     }
 }
@@ -625,6 +633,6 @@ fn profile_list(
             .map_err(|e| CliError::Local(format!("cannot render the profiles: {e}")))?;
         emit(out, &text)
     } else {
-        emit(out, &output::profiles_table(&profiles))
+        emit_rows(out, &output::profiles_table(&profiles))
     }
 }
