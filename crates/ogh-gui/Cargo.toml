@@ -8,10 +8,30 @@ rust-version.workspace = true
 name = "ogh_gui"
 path = "src/lib.rs"
 
+[[bin]]
+name = "ogh-gui"
+path = "src/bin/ogh-gui.rs"
+
 [dependencies]
 crossbeam-channel = "0.5"
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit",
+    "clipboard",
+    "default_fonts",
+    "glow",
+    "links",
+    "wayland",
+    "x11",
+] }
 ogh-ipc = { path = "../ogh-ipc" }
 ogh-protocol = { path = "../ogh-protocol" }
+png = "0.18"
+
+# eframe enables winit's defaults (runtime-loaded Wayland, client-side decorations) only
+# through its wgpu default; this keeps them with the glow renderer.
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = "0.30"
 
 [dev-dependencies]
+egui_kittest = "0.37"
 tempfile = "3"
