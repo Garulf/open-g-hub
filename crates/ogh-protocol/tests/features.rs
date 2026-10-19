@@ -1223,3 +1223,31 @@ fn range_errors_say_what_was_wrong() {
     let tones = tones::set_request(TONES, Tones(3)).unwrap_err();
     assert_eq!(tones.to_string(), "tones 3 is not one of 0, 1, 2");
 }
+
+#[test]
+fn volume_mute_is_bit_0_of_the_middle_byte_as_the_agent_reads_it() {
+    for (byte, muted) in [(0x00, false), (0x01, true), (0x02, false), (0x03, true)] {
+        assert_eq!(
+            volume::parse(&[0x1f, byte, 0x15]).map(|volume| volume.muted),
+            Ok(muted),
+            "{byte:#04x}"
+        );
+    }
+}
+
+#[test]
+fn decoded_eq_gains_equal_the_decimal_values() {
+    for (fixture, line, band, gain_db) in [
+        ("eq-headphone", 67, 5, 1.7),
+        ("eq-headphone", 72, 5, 2.85),
+        ("eq-mic", 74, 4, 2.9),
+        ("eq-headphone", 2, 2, -3.5),
+    ] {
+        let custom =
+            advanced_para_eq::parse_custom_eq(&captured_message(fixture, line).params).unwrap();
+        assert_eq!(
+            custom.equalizer.bands[band].gain_db, gain_db,
+            "{fixture} line {line}"
+        );
+    }
+}
