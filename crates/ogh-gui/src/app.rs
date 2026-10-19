@@ -4,6 +4,7 @@ use ogh_ipc::{Endpoint, Request};
 use crate::Shared;
 use crate::describe::headline;
 use crate::link::DaemonLink;
+use crate::pages::profiles::Drafts;
 use crate::pages::{self, HeldLevel};
 
 const NOT_RUNNING: &str = "ogh-daemon is not running";
@@ -46,6 +47,7 @@ pub struct GuiState {
     pub shared: Shared,
     pub page: Page,
     pub(crate) held: HeldLevel,
+    pub(crate) profile_drafts: Drafts,
 }
 
 impl GuiState {
@@ -54,6 +56,7 @@ impl GuiState {
             shared,
             page: Page::Mixer,
             held: HeldLevel::default(),
+            profile_drafts: Drafts::default(),
         }
     }
 }
@@ -63,6 +66,7 @@ pub fn show(ui: &mut Ui, state: &mut GuiState) -> Vec<Request> {
     let mut requests = Vec::new();
     state.held.release_if_idle(ui);
     if let Some(reason) = &state.shared.daemon_down {
+        state.profile_drafts.disarm();
         egui::CentralPanel::default().show(ui, |ui| daemon_down(ui, reason));
         return requests;
     }

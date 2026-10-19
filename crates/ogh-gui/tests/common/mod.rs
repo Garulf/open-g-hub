@@ -5,8 +5,8 @@ use egui_kittest::Harness;
 use ogh_gui::link::LinkEvent;
 use ogh_gui::{GuiState, Page, Shared, show};
 use ogh_ipc::{
-    AutoSwitchStatus, Channel, Connection, DeviceSettings, FocusStatus, Headset, ProfileSettings,
-    Request, Setting, Status, StreamMixSetting,
+    AutoSwitchStatus, Channel, Connection, DeviceSettings, FocusStatus, Headset, ProfileInfo,
+    ProfileSettings, Request, Setting, Status, StreamMixSetting,
 };
 
 pub struct Window {
@@ -95,4 +95,18 @@ pub fn on_page(mut gui: GuiState, page: Page) -> GuiState {
 
 pub fn set(setting: Setting) -> Request {
     Request::Set { setting }
+}
+
+pub fn profile(name: &str, apps: &[&str], is_default: bool) -> ProfileInfo {
+    ProfileInfo {
+        name: name.to_string(),
+        apps: apps.iter().map(|app| app.to_string()).collect(),
+        is_default,
+        settings: ProfileSettings::default(),
+    }
+}
+
+pub fn with_profiles(mut gui: GuiState, profiles: Vec<ProfileInfo>) -> GuiState {
+    gui.shared.apply(LinkEvent::Profiles(profiles));
+    gui
 }

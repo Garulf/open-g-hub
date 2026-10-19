@@ -1,6 +1,7 @@
 pub(crate) mod device;
 pub mod eq;
 pub(crate) mod mixer;
+pub(crate) mod profiles;
 
 use eframe::egui::{self, Slider, Ui};
 use ogh_ipc::{Request, Setting};
@@ -17,14 +18,15 @@ pub(crate) fn set(setting: Setting) -> Request {
 pub(crate) fn show(ui: &mut Ui, state: &mut GuiState, requests: &mut Vec<Request>) {
     ui.heading(state.page.title());
     ui.add_space(8.0);
+    if state.page != Page::Profiles {
+        state.profile_drafts.disarm();
+    }
     match state.page {
         Page::Mixer => mixer::show(ui, state, requests),
         Page::Device => device::show(ui, state, requests),
         Page::Equalizer => eq::equalizer(ui, state, requests),
         Page::Microphone => eq::microphone(ui, state, requests),
-        Page::Profiles => {
-            ui.label("Not available yet.");
-        }
+        Page::Profiles => profiles::show(ui, state, requests),
     }
 }
 
