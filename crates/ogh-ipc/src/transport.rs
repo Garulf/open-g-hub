@@ -390,6 +390,8 @@ mod platform {
 
     impl Closer {
         pub(super) fn close(&self) {
+            // SAFETY: the handle is a live duplicate owned by this Closer, and
+            // DisconnectNamedPipe needs nothing beyond a valid pipe handle.
             unsafe {
                 DisconnectNamedPipe(self.0.as_raw_handle());
             }
