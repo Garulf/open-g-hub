@@ -29,7 +29,7 @@ repos:
         stages: [pre-push]
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo clippy --workspace --all-targets -- -D warnings
+        entry: cargo clippy --workspace --all-targets --features ogh-device/testing -- -D warnings
         language: system
         pass_filenames: false
         always_run: true
@@ -43,7 +43,7 @@ repos:
         stages: [pre-push]
       - id: cargo-test
         name: cargo test
-        entry: cargo test --workspace
+        entry: cargo test --workspace --features ogh-device/testing
         language: system
         pass_filenames: false
         always_run: true

@@ -185,7 +185,7 @@ fn watcher_waits_for_hyprland_to_create_its_socket() {
     conn.write_all(b"activewindow>>CS2,Counter-Strike 2\n")
         .unwrap();
     let mut event = rx.recv_timeout(WAIT).unwrap();
-    while matches!(event, FocusEvent::Unavailable(_)) {
+    while matches!(event, FocusEvent::Unavailable(_) | FocusEvent::Focus(None)) {
         event = rx.recv_timeout(WAIT).unwrap();
     }
     assert_eq!(event, focus("cs2"));

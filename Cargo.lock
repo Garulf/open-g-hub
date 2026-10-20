@@ -2834,7 +2834,6 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "hidapi",
- "ogh-device",
  "ogh-protocol",
  "serde",
  "serde_json",
