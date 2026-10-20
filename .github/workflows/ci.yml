@@ -30,14 +30,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+      - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 nsis zip
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --features ogh-device/testing --locked --target x86_64-pc-windows-gnu -- -D warnings
-      - run: cargo build --workspace --release --locked --target x86_64-pc-windows-gnu
+      - run: scripts/package-windows.sh "ci-${GITHUB_SHA::7}"
       - uses: actions/upload-artifact@v4
         with:
           name: open-g-hub-windows-x86_64
@@ -46,4 +46,5 @@ jobs:
             target/x86_64-pc-windows-gnu/release/ogh-daemon.exe
             target/x86_64-pc-windows-gnu/release/ogh-gui.exe
             target/x86_64-pc-windows-gnu/release/ogh-tray.exe
+            dist/*-setup.exe
           if-no-files-found: error
