@@ -153,6 +153,11 @@ fn subscribe(mut connection: Connection, inputs: &Sender<Input>) {
         return;
     }
     let closer = connection.closer();
+    if closer.is_none() {
+        tracing::warn!(
+            "no closer for this subscriber; if it falls behind, its connection stays open until the client disconnects"
+        );
+    }
     let (closed_tx, closed) = bounded::<()>(0);
     thread::spawn(move || {
         forward_notifications(writer, notifications, closed);
