@@ -40,9 +40,11 @@ impl MenuState {
         (MenuState { items, ids }, menu)
     }
 
-    /// A new menu to show, or None when `items` is what the tray already shows.
-    fn update(&mut self, items: Vec<TrayItem>) -> Option<Menu> {
-        if items == self.items {
+    /// A new menu to show, or None when `items` is what the tray already shows. `clicked`
+    /// rebuilds regardless: muda flips a check entry when it is clicked, so after a click the
+    /// menu on screen can differ from `items` even though `items` did not change.
+    fn update(&mut self, items: Vec<TrayItem>, clicked: bool) -> Option<Menu> {
+        if !clicked && items == self.items {
             return None;
         }
         let (state, menu) = MenuState::new(items);
@@ -70,6 +72,7 @@ impl App {
     /// picked up by the next message.
     fn handle(&mut self) -> ControlFlow<()> {
         let mut changed = false;
+        let mut clicked = false;
         if let Some(link) = &self.link {
             for event in link.events() {
                 self.shared.apply(event);
@@ -78,7 +81,10 @@ impl App {
         }
         while let Ok(input) = self.inputs.try_recv() {
             let action = match input {
-                Input::Menu(id) => self.menu.action(&id),
+                Input::Menu(id) => {
+                    clicked = true;
+                    self.menu.action(&id)
+                }
                 Input::OpenWindow => Some(TrayAction::OpenWindow),
             };
             let Some(action) = action else { continue };
@@ -91,14 +97,14 @@ impl App {
             }
             changed = true;
         }
-        if changed {
-            self.redraw();
+        if changed || clicked {
+            self.redraw(clicked);
         }
         ControlFlow::Continue(())
     }
 
-    fn redraw(&mut self) {
-        if let Some(menu) = self.menu.update(tray_menu::menu(&self.shared)) {
+    fn redraw(&mut self, clicked: bool) {
+        if let Some(menu) = self.menu.update(tray_menu::menu(&self.shared), clicked) {
             self.tray.set_menu(Some(Box::new(menu)));
         }
         let _ = self
@@ -359,7 +365,7 @@ mod tests {
         let (mut state, built) = MenuState::new(items.clone());
         let ids = state.ids.clone();
 
-        assert!(state.update(items).is_none());
+        assert!(state.update(items, false).is_none());
 
         assert_eq!(state.ids, ids);
         assert_matches(&state.items, &built.items(), &state.ids);
@@ -370,11 +376,25 @@ mod tests {
         let (mut state, _) = MenuState::new(menu(&Shared::default()));
         let items = menu(&connected_headset());
 
-        let built = state.update(items.clone()).expect("the menu changed");
+        let built = state
+            .update(items.clone(), false)
+            .expect("the menu changed");
 
         assert_eq!(state.items, items);
         assert_matches(&items, &built.items(), &state.ids);
         assert_eq!(state.ids.len(), count_actionable(&items));
+    }
+
+    #[test]
+    fn a_click_rebuilds_an_unchanged_menu() {
+        let items = menu(&connected_headset());
+        let (mut state, _) = MenuState::new(items.clone());
+        let old_ids = state.ids.clone();
+
+        let built = state.update(items.clone(), true).expect("a click rebuilds");
+
+        assert_matches(&items, &built.items(), &state.ids);
+        assert!(state.ids.keys().all(|id| !old_ids.contains_key(id)));
     }
 
     #[test]
