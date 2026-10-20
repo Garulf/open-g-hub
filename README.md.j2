@@ -78,6 +78,14 @@ systemctl --user enable --now ogh-daemon ogh-tray
 ```
 
 The units run `ogh-daemon` and `ogh-tray` from systemd's search path, not your shell `PATH`, so keep them in `/usr/local/bin` or edit `ExecStart=` to the full path if you installed them elsewhere. For a launcher entry for the window, copy `packaging/linux/open-g-hub.desktop` to `~/.local/share/applications/` and `assets/icon.svg` to `~/.local/share/icons/hicolor/scalable/apps/open-g-hub.svg`.
+
+### Linux session environment
+
+On every Linux install, the NixOS and Home Manager modules included, the tray runs as a systemd user unit and the window it opens inherits that unit's environment. Both need `WAYLAND_DISPLAY` (or `DISPLAY` on X11) and `DBUS_SESSION_BUS_ADDRESS` in the systemd user manager; `systemctl --user show-environment` shows what it has. If your session does not import them, on Hyprland add this to your config:
+
+```
+exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY DBUS_SESSION_BUS_ADDRESS
+```
 {% endblock %}
 
 {% block usage %}
@@ -149,7 +157,7 @@ The tray menu has:
 - Profile: pick a saved profile
 - Sidetone: 0, 25, 50, 75 or 100 percent
 - Balance: 0 to 12 in steps of two, with 6 as the centre
-- Stream level: 0, 25, 50, 75 or 100 percent for the stream output
+- Stream level: 0, 25, 50, 75 or 100 percent for the stream output, disabled until the current profile has a stream mix
 - Switch audio on dock: the same toggle as `ogh autoswitch`
 - Open open-g-hub: starts `ogh-gui` from the folder `ogh-tray` runs from
 - Quit tray
@@ -167,7 +175,7 @@ The daemon keeps profiles, app links and the audio switch settings in `config.to
 | Windows | `%APPDATA%\open-g-hub\config\config.toml` |
 | Linux | `~/.config/open-g-hub/config.toml` |
 
-Its state and `daemon.log` sit next to it under the local data directory (`%LOCALAPPDATA%\open-g-hub\data` on Windows, `~/.local/share/open-g-hub` on Linux). Use the `ogh profile` commands to edit profiles and links. The audio switch names are the one thing you edit by hand. The daemon reads the file again before every change, so an edit takes effect at the next `ogh` command that changes something, such as `ogh autoswitch on`, or when the daemon restarts. A file that no longer parses is reported in `ogh status` and left as it is. The daemon reads it again on the next `ogh` command once you have fixed it:
+Its state sits under the local data directory (`%LOCALAPPDATA%\open-g-hub\data` on Windows, `~/.local/share/open-g-hub` on Linux). Use the `ogh profile` commands to edit profiles and links. The audio switch names are the one thing you edit by hand. The daemon reads the file again before every change, so an edit takes effect at the next `ogh` command that changes something, such as `ogh autoswitch on`, or when the daemon restarts. A file that no longer parses is reported in `ogh status` and left as it is. The daemon reads it again on the next `ogh` command once you have fixed it:
 
 ```toml
 [audio_switch]
@@ -178,6 +186,8 @@ mic_input = "A50 X Mic"
 ```
 
 On Windows the game output becomes the default playback device for the Console and Multimedia roles, the voice output the default for Communications, and the mic the default capture device for all three roles. Each previous default is remembered and restored separately. On Linux the game output becomes the default sink and the mic the default source, and each name is matched as a substring of the PipeWire node description.
+
+On Windows the daemon logs to `daemon.log` in the local data directory. On Linux it logs to stderr, which the systemd unit sends to the journal (`journalctl --user -u ogh-daemon`); `ogh-daemon --log-file <path>` writes a file instead. When the daemon starts and its log file is over 5 MiB, it renames it to the same name with `.1` added (`daemon.log.1`), replacing the one before, so it keeps one older log.
 
 ## Coexisting with G Hub
 
