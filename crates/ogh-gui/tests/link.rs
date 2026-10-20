@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
 use ogh_gui::link::{DaemonLink, LinkEvent};
@@ -82,7 +82,7 @@ impl FakeDaemon {
         statuses: Vec<Status>,
         handler: Handler,
     ) -> FakeDaemon {
-        let server = Server::bind(endpoint).unwrap();
+        let server = bind_when_free(endpoint);
         let (log, requests) = unbounded();
         let stopped = Arc::new(AtomicBool::new(false));
         let closers = Arc::new(Mutex::new(Vec::new()));
@@ -118,17 +118,23 @@ impl FakeDaemon {
     /// Ends every open connection and releases the endpoint.
     fn stop(&mut self) {
         self.stopped.store(true, Ordering::SeqCst);
+        self.close_connections();
+        let _ = Client::connect(&self.endpoint);
+        if let Some(accept) = self.accept.take() {
+            accept.join().unwrap();
+        }
+        self.close_connections();
+    }
+
+    /// Dropping each closer matters on Windows: its duplicated handle keeps the pipe name taken.
+    fn close_connections(&self) {
         for closer in self
             .closers
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .iter()
+            .drain(..)
         {
             closer.close();
-        }
-        let _ = Client::connect(&self.endpoint);
-        if let Some(accept) = self.accept.take() {
-            accept.join().unwrap();
         }
     }
 
@@ -136,6 +142,20 @@ impl FakeDaemon {
         self.requests
             .recv_timeout(WAIT)
             .expect("a request on the wire")
+    }
+}
+
+/// A stopped daemon's pipe name stays taken on Windows until its serving threads and the
+/// link's client have dropped their handles, which happens shortly after the stop.
+fn bind_when_free(endpoint: &Endpoint) -> Server {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        match Server::bind(endpoint) {
+            Err(TransportError::AlreadyRunning) if Instant::now() < deadline => {
+                thread::sleep(RETRY);
+            }
+            bound => return bound.unwrap(),
+        }
     }
 }
 
