@@ -1,5 +1,3 @@
-#![cfg(unix)]
-
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -173,7 +171,7 @@ struct Harness {
 impl Harness {
     fn endpoint() -> (TempDir, Endpoint) {
         let dir = TempDir::new().unwrap();
-        let endpoint = Endpoint::Path(dir.path().join("daemon.sock"));
+        let endpoint = endpoint_in(&dir);
         (dir, endpoint)
     }
 
@@ -216,6 +214,18 @@ impl Harness {
         }
         events
     }
+}
+
+#[cfg(unix)]
+fn endpoint_in(dir: &TempDir) -> Endpoint {
+    Endpoint::Path(dir.path().join("daemon.sock"))
+}
+
+#[cfg(windows)]
+fn endpoint_in(_dir: &TempDir) -> Endpoint {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, Ordering::SeqCst);
+    Endpoint::PipeName(format!("ogh-gui-test-{}-{n}", std::process::id()))
 }
 
 fn count(events: &[LinkEvent], kind: impl Fn(&LinkEvent) -> bool) -> usize {
