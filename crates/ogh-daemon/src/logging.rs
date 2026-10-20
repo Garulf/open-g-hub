@@ -1,8 +1,11 @@
 use std::fs::{self, OpenOptions};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use tracing_subscriber::EnvFilter;
+
+pub const LOG_ROTATE_BYTES: u64 = 5 * 1024 * 1024;
 
 pub enum Destination {
     Stderr,
@@ -16,6 +19,7 @@ pub fn init(destination: Destination) -> Result<(), String> {
     let result = match destination {
         Destination::Stderr => builder.with_writer(std::io::stderr).try_init(),
         Destination::File(path) => {
+            let _ = rotate_if_large(&path, LOG_ROTATE_BYTES);
             let file = open_log_file(&path)?;
             builder
                 .with_ansi(false)
@@ -36,4 +40,18 @@ fn open_log_file(path: &Path) -> Result<std::fs::File, String> {
         .append(true)
         .open(path)
         .map_err(|e| format!("cannot open log file {}: {e}", path.display()))
+}
+
+/// Keeps one previous log. A log that does not exist yet is not an error.
+pub fn rotate_if_large(path: &Path, limit_bytes: u64) -> io::Result<()> {
+    match fs::metadata(path) {
+        Ok(meta) if meta.len() > limit_bytes => {
+            let mut rotated = path.as_os_str().to_owned();
+            rotated.push(".1");
+            fs::rename(path, rotated)
+        }
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
 }

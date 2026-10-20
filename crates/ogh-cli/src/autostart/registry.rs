@@ -9,7 +9,6 @@ use windows_sys::Win32::System::Registry::{
 use crate::error::CliError;
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-const VALUE_NAME: &str = "open-g-hub";
 
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
@@ -21,13 +20,13 @@ fn failure(action: &str, code: WIN32_ERROR) -> CliError {
     ))
 }
 
-/// Writes the Run value as a NUL-terminated REG_SZ.
-pub fn set(command: &str) -> Result<(), CliError> {
+/// Writes the Run value `value_name` as a NUL-terminated REG_SZ.
+pub fn set(value_name: &str, command: &str) -> Result<(), CliError> {
     let key = wide(RUN_KEY);
-    let name = wide(VALUE_NAME);
+    let name = wide(value_name);
     let data = wide(command);
     let byte_len = u32::try_from(data.len() * size_of::<u16>())
-        .map_err(|_| CliError::Local("the daemon path is too long".to_string()))?;
+        .map_err(|_| CliError::Local("the program path is too long".to_string()))?;
     // SAFETY: `key`, `name` and `data` are NUL-terminated UTF-16 buffers that outlive
     // the call, and `byte_len` is the exact size of `data` including its NUL.
     let code = unsafe {
@@ -47,9 +46,9 @@ pub fn set(command: &str) -> Result<(), CliError> {
 }
 
 /// Deletes the Run value; a value that is already gone counts as deleted.
-pub fn remove() -> Result<(), CliError> {
+pub fn remove(value_name: &str) -> Result<(), CliError> {
     let key = wide(RUN_KEY);
-    let name = wide(VALUE_NAME);
+    let name = wide(value_name);
     // SAFETY: `key` and `name` are NUL-terminated UTF-16 buffers that outlive the call.
     let code = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr()) };
     match code {
@@ -59,9 +58,9 @@ pub fn remove() -> Result<(), CliError> {
 }
 
 /// Whether the Run value exists, whatever its type.
-pub fn is_set() -> Result<bool, CliError> {
+pub fn is_set(value_name: &str) -> Result<bool, CliError> {
     let key = wide(RUN_KEY);
-    let name = wide(VALUE_NAME);
+    let name = wide(value_name);
     // SAFETY: `key` and `name` are NUL-terminated UTF-16 buffers that outlive the call;
     // the null type, data and size pointers ask only whether the value exists.
     let code = unsafe {

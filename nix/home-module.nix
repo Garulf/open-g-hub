@@ -28,6 +28,15 @@ in
       defaultText = lib.literalExpression "open-g-hub.packages.\${pkgs.stdenv.hostPlatform.system}.default";
       description = "The open-g-hub package to use.";
     };
+
+    tray.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether to run the open-g-hub tray icon as a user service next to the
+        daemon. Only takes effect when `services.open-g-hub.enable` is set.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -52,6 +61,23 @@ in
             pkgs.pipewire
           ]
         }";
+      };
+      Install.WantedBy = [ "graphical-session.target" ];
+    };
+
+    systemd.user.services.ogh-tray = lib.mkIf cfg.tray.enable {
+      Unit = {
+        Description = "open-g-hub tray";
+        After = [
+          "graphical-session.target"
+          "ogh-daemon.service"
+        ];
+        PartOf = [ "graphical-session.target" ];
+      };
+      Service = {
+        ExecStart = "${cfg.package}/bin/ogh-tray";
+        Restart = "on-failure";
+        RestartSec = 2;
       };
       Install.WantedBy = [ "graphical-session.target" ];
     };

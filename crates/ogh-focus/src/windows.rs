@@ -14,15 +14,15 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     PostQuitMessage, WINEVENT_OUTOFCONTEXT,
 };
 
-use crate::Unavailable;
+use crate::{FocusEvent, Unavailable};
 
 const MAX_PATH_UTF16: usize = 32 * 1024;
 
 thread_local! {
-    static ON_FOCUS: RefCell<Option<Sender<Option<String>>>> = const { RefCell::new(None) };
+    static ON_FOCUS: RefCell<Option<Sender<FocusEvent>>> = const { RefCell::new(None) };
 }
 
-pub(crate) fn spawn(on_focus: Sender<Option<String>>) -> Result<JoinHandle<()>, Unavailable> {
+pub(crate) fn spawn(on_focus: Sender<FocusEvent>) -> Result<JoinHandle<()>, Unavailable> {
     let (started_tx, started) = bounded::<Result<(), String>>(1);
     let handle = thread::spawn(move || run(on_focus, started_tx));
     match started.recv() {
@@ -34,7 +34,7 @@ pub(crate) fn spawn(on_focus: Sender<Option<String>>) -> Result<JoinHandle<()>, 
     }
 }
 
-fn run(on_focus: Sender<Option<String>>, started: Sender<Result<(), String>>) {
+fn run(on_focus: Sender<FocusEvent>, started: Sender<Result<(), String>>) {
     // SAFETY: the callback only reads thread-local state and runs on this
     // thread, from inside `GetMessageW`, because of WINEVENT_OUTOFCONTEXT.
     let hook = unsafe {
@@ -54,7 +54,7 @@ fn run(on_focus: Sender<Option<String>>, started: Sender<Result<(), String>>) {
     }
     // SAFETY: no pointers are involved.
     let current = app_of(unsafe { GetForegroundWindow() });
-    if on_focus.send(current).is_ok() {
+    if on_focus.send(FocusEvent::Focus(current)).is_ok() {
         ON_FOCUS.with(|slot| *slot.borrow_mut() = Some(on_focus));
         let _ = started.send(Ok(()));
         pump_messages();
@@ -83,7 +83,7 @@ unsafe extern "system" fn on_foreground_changed(
 ) {
     let app = app_of(window);
     let delivered = ON_FOCUS.with(|slot| match slot.borrow().as_ref() {
-        Some(sender) => sender.send(app).is_ok(),
+        Some(sender) => sender.send(FocusEvent::Focus(app)).is_ok(),
         None => false,
     });
     if !delivered {

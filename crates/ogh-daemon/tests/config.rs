@@ -376,6 +376,26 @@ fn file_broken_while_running_is_not_overwritten_until_fixed() {
 }
 
 #[test]
+fn unreadable_config_recovers_without_a_mutation() {
+    let dir = TempDir::new().unwrap();
+    let path = config_path(&dir);
+    fs::write(&path, "default_profile = [").unwrap();
+    let mut store = Store::open(&path);
+    assert!(store.config_error().is_some());
+
+    let mut fixed = Config::default();
+    fixed.profiles.insert("fps".to_string(), Default::default());
+    save(&path, &fixed).unwrap();
+    assert!(store.retry_if_unreadable());
+    assert_eq!(store.config_error(), None);
+    assert!(store.config().unwrap().profiles.contains_key("fps"));
+
+    fs::write(&path, "default_profile = [").unwrap();
+    assert!(!store.retry_if_unreadable());
+    assert_eq!(store.config_error(), None);
+}
+
+#[test]
 fn file_deleted_while_running_starts_again_from_defaults() {
     let dir = TempDir::new().unwrap();
     let path = config_path(&dir);

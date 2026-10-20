@@ -1,0 +1,50 @@
+[package]
+name = "ogh-gui"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+
+[lib]
+name = "ogh_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ogh-gui"
+path = "src/bin/ogh-gui.rs"
+
+[[bin]]
+name = "ogh-tray"
+path = "src/bin/ogh-tray.rs"
+
+[dependencies]
+crossbeam-channel = "0.5"
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit",
+    "clipboard",
+    "default_fonts",
+    "glow",
+    "links",
+    "wayland",
+    "x11",
+] }
+ogh-ipc = { path = "../ogh-ipc" }
+ogh-protocol = { path = "../ogh-protocol" }
+png = "0.18"
+
+# eframe enables winit's defaults (runtime-loaded Wayland, client-side decorations) only
+# through its wgpu default; this keeps them with the glow renderer.
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
+winit = "0.30"
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = "0.26"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+egui_kittest = "0.37"
+tempfile = "3"

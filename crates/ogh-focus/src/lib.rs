@@ -21,24 +21,33 @@ impl fmt::Display for Unavailable {
     }
 }
 
-/// Starts watching the focus. Each focus change sends the lowercased app name,
-/// or `None` when focus goes to nothing.
-pub fn spawn(on_focus: Sender<Option<String>>) -> Result<JoinHandle<()>, Unavailable> {
-    spawn_platform(on_focus)
+/// What the focus watcher reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FocusEvent {
+    /// The lowercased name of the focused app, or `None` when focus goes to
+    /// nothing.
+    Focus(Option<String>),
+    /// Focus cannot be followed right now; `Focus` events resume once it can.
+    Unavailable(String),
+}
+
+/// Starts watching the focus and reports it as `FocusEvent`s.
+pub fn spawn(events: Sender<FocusEvent>) -> Result<JoinHandle<()>, Unavailable> {
+    spawn_platform(events)
 }
 
 #[cfg(windows)]
-fn spawn_platform(on_focus: Sender<Option<String>>) -> Result<JoinHandle<()>, Unavailable> {
-    windows::spawn(on_focus)
+fn spawn_platform(events: Sender<FocusEvent>) -> Result<JoinHandle<()>, Unavailable> {
+    windows::spawn(events)
 }
 
 #[cfg(target_os = "linux")]
-fn spawn_platform(on_focus: Sender<Option<String>>) -> Result<JoinHandle<()>, Unavailable> {
-    hyprland::spawn(on_focus)
+fn spawn_platform(events: Sender<FocusEvent>) -> Result<JoinHandle<()>, Unavailable> {
+    hyprland::spawn(events)
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
-fn spawn_platform(_on_focus: Sender<Option<String>>) -> Result<JoinHandle<()>, Unavailable> {
+fn spawn_platform(_events: Sender<FocusEvent>) -> Result<JoinHandle<()>, Unavailable> {
     Err(Unavailable(
         "focus switching is not supported on this platform".to_string(),
     ))

@@ -11,13 +11,15 @@ target=x86_64-pc-windows-gnu
 release_dir="target/$target/release"
 zip_path="$repo_root/dist/open-g-hub-$version-windows-x86_64.zip"
 
-cargo build --release --locked --target "$target" -p ogh-cli -p ogh-daemon
+cargo build --release --locked --target "$target" -p ogh-cli -p ogh-daemon -p ogh-gui
 
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
-cp "$release_dir/ogh.exe" "$release_dir/ogh-daemon.exe" packaging/windows/README.txt "$stage/"
+cp "$release_dir/ogh.exe" "$release_dir/ogh-daemon.exe" "$release_dir/ogh-gui.exe" \
+  "$release_dir/ogh-tray.exe" packaging/windows/README.txt "$stage/"
 
 mkdir -p dist
 rm -f "$zip_path"
-zip -j -q "$zip_path" "$stage/ogh.exe" "$stage/ogh-daemon.exe" "$stage/README.txt"
+zip -j -q "$zip_path" "$stage/ogh.exe" "$stage/ogh-daemon.exe" "$stage/ogh-gui.exe" \
+  "$stage/ogh-tray.exe" "$stage/README.txt"
 echo "$zip_path"

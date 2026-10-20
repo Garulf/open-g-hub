@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use ogh_device::{Session, guard};
+use ogh_focus::FocusEvent;
 use ogh_ipc::{Endpoint, Server};
 
 use crate::autoswitch::Command;
@@ -102,8 +103,12 @@ fn start_focus_watcher(inputs: Sender<Input>) {
     match ogh_focus::spawn(focus_tx) {
         Ok(_) => {
             thread::spawn(move || {
-                for app in focus_rx {
-                    if inputs.send(Input::Focus(app)).is_err() {
+                for event in focus_rx {
+                    let input = match event {
+                        FocusEvent::Focus(app) => Input::Focus(app),
+                        FocusEvent::Unavailable(reason) => Input::FocusUnavailable(reason),
+                    };
+                    if inputs.send(input).is_err() {
                         return;
                     }
                 }
