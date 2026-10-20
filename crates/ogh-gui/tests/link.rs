@@ -9,6 +9,7 @@ use ogh_ipc::transport::{Connection, ConnectionCloser};
 use ogh_ipc::{
     AutoSwitchStatus, Client, Endpoint, ErrorKind, FocusStatus, Headset, Hello, IPC_VERSION,
     IpcError, ProfileInfo, ProfileSettings, Request, Response, Server, Setting, Status,
+    TransportError,
 };
 use tempfile::TempDir;
 
@@ -72,6 +73,15 @@ struct FakeDaemon {
 
 impl FakeDaemon {
     fn start(endpoint: &Endpoint, statuses: Vec<Status>, handler: Handler) -> FakeDaemon {
+        FakeDaemon::speaking(IPC_VERSION, endpoint, statuses, handler)
+    }
+
+    fn speaking(
+        version: u32,
+        endpoint: &Endpoint,
+        statuses: Vec<Status>,
+        handler: Handler,
+    ) -> FakeDaemon {
         let server = Server::bind(endpoint).unwrap();
         let (log, requests) = unbounded();
         let stopped = Arc::new(AtomicBool::new(false));
@@ -92,7 +102,7 @@ impl FakeDaemon {
                     }
                     let (statuses, handler, log) =
                         (statuses.clone(), Arc::clone(&handler), log.clone());
-                    thread::spawn(move || serve(connection, &statuses, &*handler, &log));
+                    thread::spawn(move || serve(connection, version, &statuses, &*handler, &log));
                 }
             })
         };
@@ -131,6 +141,7 @@ impl FakeDaemon {
 
 fn serve(
     mut connection: Connection,
+    version: u32,
     statuses: &[Status],
     handler: &(dyn Fn(&Request) -> Response + Send + Sync),
     log: &Sender<Request>,
@@ -138,7 +149,7 @@ fn serve(
     while let Ok(Some(request)) = connection.recv::<Request>() {
         let sent = match &request {
             Request::Hello { .. } => connection.send(&Response::Hello(Hello {
-                version: IPC_VERSION,
+                version,
                 daemon_version: "test".to_string(),
             })),
             Request::Subscribe => {
@@ -356,6 +367,26 @@ fn daemon_errors_become_request_failed() {
     assert_eq!(
         harness.next_event(),
         LinkEvent::RequestFailed("no profile named x".to_string())
+    );
+}
+
+#[test]
+fn a_version_mismatch_on_a_request_names_both_versions() {
+    let (dir, endpoint) = Harness::endpoint();
+    let _daemon = FakeDaemon::speaking(IPC_VERSION + 1, &endpoint, Vec::new(), answer_done());
+    let mut harness = Harness::start(dir, &endpoint);
+    harness.events_until(|events| count(events, is_down) == 1);
+
+    harness.link.send(Request::ApplyProfile {
+        name: "x".to_string(),
+    });
+
+    let mismatch = TransportError::VersionMismatch {
+        daemon: IPC_VERSION + 1,
+    };
+    assert_eq!(
+        harness.next_event(),
+        LinkEvent::RequestFailed(mismatch.to_string())
     );
 }
 

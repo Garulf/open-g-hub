@@ -146,21 +146,16 @@ pub fn run() -> Result<(), String> {
     let (actions, received) = unbounded();
     let handle_cell: Arc<OnceLock<Handle<TrayModel>>> = Arc::new(OnceLock::new());
 
-    let mut shared = Shared::default();
-    let link = match Endpoint::for_current_user() {
-        Ok(endpoint) => {
-            let cell = handle_cell.clone();
-            Some(Arc::new(DaemonLink::start(endpoint, move || {
-                if let Some(handle) = cell.get() {
-                    handle.update(TrayModel::drain);
-                }
-            })))
-        }
-        Err(error) => {
-            shared.daemon_down = Some(error.to_string());
-            None
-        }
-    };
+    let endpoint = Endpoint::for_current_user();
+    let shared = Shared::starting(&endpoint);
+    let cell = handle_cell.clone();
+    let link = endpoint.ok().map(|endpoint| {
+        Arc::new(DaemonLink::start(endpoint, move || {
+            if let Some(handle) = cell.get() {
+                handle.update(TrayModel::drain);
+            }
+        }))
+    });
 
     let model = TrayModel {
         shared,
@@ -174,7 +169,7 @@ pub fn run() -> Result<(), String> {
     handle.update(TrayModel::drain);
 
     let outcome = serve(&received, link.as_deref(), &mut launcher, |error| {
-        handle.update(|model| model.shared.last_error = Some(error));
+        handle.update(|model| model.shared.last_error = error);
     });
     handle.shutdown().wait();
     outcome
@@ -185,12 +180,12 @@ fn serve(
     received: &Receiver<TrayAction>,
     link: Option<&DaemonLink>,
     launcher: &mut Launcher,
-    report: impl Fn(String),
+    set_error: impl Fn(Option<String>),
 ) -> Result<(), String> {
     loop {
         match received.recv() {
             Ok(action) => {
-                if super::perform(action, link, launcher, &report).is_break() {
+                if super::perform(action, link, launcher, &set_error).is_break() {
                     return Ok(());
                 }
             }
@@ -402,6 +397,7 @@ mod tests {
 
         let reported = reported.into_inner();
         assert_eq!(reported.len(), 1);
-        assert!(reported[0].contains("ogh-gui"), "{}", reported[0]);
+        let error = reported[0].as_deref().unwrap_or_default();
+        assert!(error.contains("ogh-gui"), "{error}");
     }
 }

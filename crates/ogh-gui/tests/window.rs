@@ -5,7 +5,7 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use ogh_gui::icon::{self, IconSize};
 use ogh_gui::link::LinkEvent;
 use ogh_gui::{GuiState, Page, Shared};
-use ogh_ipc::{Connection, Request, Setting};
+use ogh_ipc::{Connection, Endpoint, Request, Setting};
 
 mod common;
 use common::{Window, connected, gui_with, harness, mix, on_page, set, status};
@@ -37,6 +37,17 @@ fn daemon_down_shows_only_the_hint() {
             .is_none()
     );
     assert!(harness.query_by_label("Mixer").is_none());
+}
+
+#[test]
+fn connecting_shows_the_headline_with_controls_disabled() {
+    let endpoint = Endpoint::PipeName("unused".to_string());
+    let mut harness = harness(GuiState::new(Shared::starting(&Ok(endpoint))));
+    harness.run();
+
+    harness.get_by_label("Connecting to ogh-daemon");
+    let slider = harness.get_by_role_and_label(Role::Slider, "Sidetone");
+    assert!(slider.accesskit_node().is_disabled());
 }
 
 #[test]
@@ -75,8 +86,9 @@ fn stream_mute_sends_the_whole_mix() {
     let mut harness = harness(connected());
     harness.run();
 
-    let mutes = harness.get_all_by_role_and_label(Role::CheckBox, "Mute");
-    mutes.into_iter().nth(1).expect("a Game mute").click();
+    harness
+        .get_by_role_and_label(Role::CheckBox, "Mute game")
+        .click();
     harness.run();
 
     let mut expected = mix();
@@ -252,7 +264,8 @@ fn unknown_values_are_disabled_and_marked() {
     );
     slider.click();
     harness.run();
-    for mute in harness.get_all_by_role_and_label(Role::CheckBox, "Mute") {
+    for label in ["Mute output", "Mute game", "Mute voice"] {
+        let mute = harness.get_by_role_and_label(Role::CheckBox, label);
         assert!(mute.accesskit_node().is_disabled());
         mute.click();
     }

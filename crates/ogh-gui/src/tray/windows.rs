@@ -28,10 +28,37 @@ enum Input {
     OpenWindow,
 }
 
+/// The items behind the menu the tray shows, and the action of each of its entries.
+struct MenuState {
+    items: Vec<TrayItem>,
+    ids: HashMap<MenuId, TrayAction>,
+}
+
+impl MenuState {
+    fn new(items: Vec<TrayItem>) -> (MenuState, Menu) {
+        let (menu, ids) = build_menu(&items);
+        (MenuState { items, ids }, menu)
+    }
+
+    /// A new menu to show, or None when `items` is what the tray already shows.
+    fn update(&mut self, items: Vec<TrayItem>) -> Option<Menu> {
+        if items == self.items {
+            return None;
+        }
+        let (state, menu) = MenuState::new(items);
+        *self = state;
+        Some(menu)
+    }
+
+    fn action(&self, id: &MenuId) -> Option<TrayAction> {
+        self.ids.get(id).cloned()
+    }
+}
+
 struct App {
     tray: TrayIcon,
     shared: Shared,
-    ids: HashMap<MenuId, TrayAction>,
+    menu: MenuState,
     link: Option<DaemonLink>,
     launcher: Launcher,
     inputs: Receiver<Input>,
@@ -51,13 +78,13 @@ impl App {
         }
         while let Ok(input) = self.inputs.try_recv() {
             let action = match input {
-                Input::Menu(id) => self.ids.get(&id).cloned(),
+                Input::Menu(id) => self.menu.action(&id),
                 Input::OpenWindow => Some(TrayAction::OpenWindow),
             };
             let Some(action) = action else { continue };
             let shared = &mut self.shared;
             let flow = perform(action, self.link.as_ref(), &mut self.launcher, |error| {
-                shared.last_error = Some(error)
+                shared.last_error = error
             });
             if flow.is_break() {
                 return flow;
@@ -71,9 +98,9 @@ impl App {
     }
 
     fn redraw(&mut self) {
-        let (menu, ids) = build_menu(&tray_menu::menu(&self.shared));
-        self.ids = ids;
-        self.tray.set_menu(Some(Box::new(menu)));
+        if let Some(menu) = self.menu.update(tray_menu::menu(&self.shared)) {
+            self.tray.set_menu(Some(Box::new(menu)));
+        }
         let _ = self
             .tray
             .set_tooltip(Some(tray_menu::tooltip(&self.shared)));
@@ -162,11 +189,11 @@ fn forward_events(inputs: Sender<Input>, thread_id: u32) {
     }));
 }
 
-fn tray_icon(shared: &Shared) -> Result<(TrayIcon, HashMap<MenuId, TrayAction>), String> {
+fn tray_icon(shared: &Shared) -> Result<(TrayIcon, MenuState), String> {
     let (rgba, width, height) = icon::rgba(IconSize::Small);
     let icon = Icon::from_rgba(rgba, width, height)
         .map_err(|error| format!("could not build the tray icon: {error}"))?;
-    let (menu, ids) = build_menu(&tray_menu::menu(shared));
+    let (state, menu) = MenuState::new(tray_menu::menu(shared));
     let tray = TrayIconBuilder::new()
         .with_icon(icon)
         .with_tooltip(tray_menu::tooltip(shared))
@@ -174,7 +201,7 @@ fn tray_icon(shared: &Shared) -> Result<(TrayIcon, HashMap<MenuId, TrayAction>),
         .with_menu_on_left_click(false)
         .build()
         .map_err(|error| format!("could not register the tray: {error}"))?;
-    Ok((tray, ids))
+    Ok((tray, state))
 }
 
 fn message_loop(app: &mut App) -> Result<(), String> {
@@ -210,21 +237,17 @@ pub fn run() -> Result<(), String> {
     let (sender, inputs) = unbounded();
     forward_events(sender, thread_id);
 
-    let mut shared = Shared::default();
-    let endpoint = match Endpoint::for_current_user() {
-        Ok(endpoint) => Some(endpoint),
-        Err(error) => {
-            shared.daemon_down = Some(error.to_string());
-            None
-        }
-    };
-    let (tray, ids) = tray_icon(&shared)?;
+    let endpoint = Endpoint::for_current_user();
+    let shared = Shared::starting(&endpoint);
+    let (tray, menu) = tray_icon(&shared)?;
     // The thread has a message queue only once the tray window exists, so the link starts after it.
-    let link = endpoint.map(|endpoint| DaemonLink::start(endpoint, move || wake(thread_id)));
+    let link = endpoint
+        .ok()
+        .map(|endpoint| DaemonLink::start(endpoint, move || wake(thread_id)));
     let mut app = App {
         tray,
         shared,
-        ids,
+        menu,
         link,
         launcher,
         inputs,
@@ -240,7 +263,8 @@ mod tests {
     use tray_icon::menu::{MenuId, MenuItemKind};
     use tray_icon::{MouseButton, MouseButtonState, Rect, TrayIconEvent, TrayIconId};
 
-    use super::{Input, build_menu, click_input, escape_mnemonic};
+    use super::{Input, MenuState, build_menu, click_input, escape_mnemonic};
+    use crate::Shared;
     use crate::tray::test_fixtures::connected_headset;
     use crate::tray_menu::{TrayAction, TrayItem, menu};
 
@@ -327,6 +351,30 @@ mod tests {
 
         assert_matches(&items, &built.items(), &actions);
         assert_eq!(actions.len(), count_actionable(&items));
+    }
+
+    #[test]
+    fn an_unchanged_menu_is_not_rebuilt() {
+        let items = menu(&connected_headset());
+        let (mut state, built) = MenuState::new(items.clone());
+        let ids = state.ids.clone();
+
+        assert!(state.update(items).is_none());
+
+        assert_eq!(state.ids, ids);
+        assert_matches(&state.items, &built.items(), &state.ids);
+    }
+
+    #[test]
+    fn a_changed_menu_is_rebuilt_with_its_own_ids() {
+        let (mut state, _) = MenuState::new(menu(&Shared::default()));
+        let items = menu(&connected_headset());
+
+        let built = state.update(items.clone()).expect("the menu changed");
+
+        assert_eq!(state.items, items);
+        assert_matches(&items, &built.items(), &state.ids);
+        assert_eq!(state.ids.len(), count_actionable(&items));
     }
 
     #[test]

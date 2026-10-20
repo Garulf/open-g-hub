@@ -2,12 +2,10 @@ use eframe::egui::{self, Label, RichText, Ui};
 use ogh_ipc::{Endpoint, Request};
 
 use crate::Shared;
-use crate::describe::headline;
+use crate::describe::{NOT_RUNNING, headline};
 use crate::link::DaemonLink;
 use crate::pages::profiles::Drafts;
 use crate::pages::{self, HeldLevel};
-
-const NOT_RUNNING: &str = "ogh-daemon is not running";
 
 #[cfg(not(windows))]
 const START_HINT: &str = "systemctl --user start ogh-daemon";
@@ -138,17 +136,12 @@ pub struct GuiApp {
 
 impl GuiApp {
     pub fn new(ctx: &egui::Context) -> GuiApp {
-        let mut shared = Shared::default();
-        let link = match Endpoint::for_current_user() {
-            Ok(endpoint) => {
-                let ctx = ctx.clone();
-                Some(DaemonLink::start(endpoint, move || ctx.request_repaint()))
-            }
-            Err(error) => {
-                shared.daemon_down = Some(error.to_string());
-                None
-            }
-        };
+        let endpoint = Endpoint::for_current_user();
+        let shared = Shared::starting(&endpoint);
+        let ctx = ctx.clone();
+        let link = endpoint
+            .ok()
+            .map(|endpoint| DaemonLink::start(endpoint, move || ctx.request_repaint()));
         GuiApp {
             state: GuiState::new(shared),
             link,

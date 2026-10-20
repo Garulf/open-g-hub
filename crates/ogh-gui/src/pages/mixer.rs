@@ -1,7 +1,7 @@
 use eframe::egui::{Checkbox, Ui};
 use ogh_ipc::{Channel, Request, Setting, StreamMixSetting};
 
-use super::{Level, LevelControl, Scale, set};
+use super::{Level, LevelControl, Scale, set, set_accessible_label};
 use crate::app::GuiState;
 
 pub(crate) fn show(ui: &mut Ui, state: &mut GuiState, requests: &mut Vec<Request>) {
@@ -72,6 +72,14 @@ impl Stream {
         }
     }
 
+    fn mute_label(self) -> &'static str {
+        match self {
+            Stream::Output => "Mute output",
+            Stream::Game => "Mute game",
+            Stream::Voice => "Mute voice",
+        }
+    }
+
     fn channel(self, mix: &mut StreamMixSetting) -> &mut Channel {
         match self {
             Stream::Output => &mut mix.output,
@@ -116,16 +124,15 @@ fn stream_row(
                 enabled,
             },
         );
-        match channel {
+        let mute = match channel {
             Some(channel) => {
                 if let Some(percent) = level {
                     channel.level_percent = percent;
                 }
-                ui.add_enabled(enabled, Checkbox::new(&mut channel.muted, "Mute"));
+                ui.add_enabled(enabled, Checkbox::new(&mut channel.muted, "Mute"))
             }
-            None => {
-                ui.add_enabled(false, Checkbox::new(&mut false, "Mute"));
-            }
-        }
+            None => ui.add_enabled(false, Checkbox::new(&mut false, "Mute")),
+        };
+        set_accessible_label(ui, &mute, stream.mute_label());
     });
 }

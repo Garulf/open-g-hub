@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use eframe::egui::{IconData, ViewportBuilder};
 use ogh_gui::GuiApp;
 use ogh_gui::icon::{self, IconSize};
+use ogh_gui::startup::report_startup_error;
 
 fn main() -> ExitCode {
     let (rgba, width, height) = icon::rgba(IconSize::Large);
@@ -27,7 +28,7 @@ fn main() -> ExitCode {
     match started {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("ogh-gui: {error}");
+            report_startup_error("ogh-gui", &error.to_string());
             ExitCode::FAILURE
         }
     }

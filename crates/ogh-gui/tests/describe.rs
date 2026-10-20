@@ -4,8 +4,8 @@ use ogh_gui::describe::{
 };
 use ogh_gui::link::LinkEvent;
 use ogh_ipc::{
-    AutoSwitchStatus, Battery, Charge, Connection, FocusStatus, Gate, Headset, ProfileInfo,
-    ProfileSettings, Status,
+    AutoSwitchStatus, Battery, Charge, Connection, Endpoint, FocusStatus, Gate, Headset,
+    ProfileInfo, ProfileSettings, Status, TransportError,
 };
 
 fn status(connection: Connection, headset: Headset, battery: Option<Battery>) -> Status {
@@ -58,6 +58,55 @@ fn headline_when_the_daemon_is_down() {
 #[test]
 fn headline_before_any_event() {
     assert_eq!(headline(&Shared::default()), "ogh-daemon is not running");
+}
+
+fn connecting() -> Shared {
+    Shared::starting(&Ok(Endpoint::PipeName("unused".to_string())))
+}
+
+#[test]
+fn headline_while_connecting() {
+    assert_eq!(headline(&connecting()), "Connecting to ogh-daemon");
+}
+
+#[test]
+fn headline_when_the_endpoint_cannot_be_resolved() {
+    let shared = Shared::starting(&Err(TransportError::XdgRuntimeDirUnset));
+    assert_eq!(headline(&shared), "ogh-daemon is not running");
+    assert_eq!(
+        shared.daemon_down.as_deref(),
+        Some("XDG_RUNTIME_DIR is not set")
+    );
+}
+
+#[test]
+fn headline_when_connecting_fails() {
+    let mut shared = connecting();
+    shared.apply(LinkEvent::DaemonDown("refused".to_string()));
+    assert_eq!(headline(&shared), "ogh-daemon is not running");
+}
+
+#[test]
+fn headline_once_connected() {
+    let mut shared = connecting();
+    shared.apply(LinkEvent::Status(Box::new(status(
+        Connection::NotFound,
+        Headset::Unknown,
+        None,
+    ))));
+    assert_eq!(headline(&shared), "A50 X not found");
+}
+
+#[test]
+fn headline_after_the_daemon_goes_down_again() {
+    let mut shared = connecting();
+    shared.apply(LinkEvent::Status(Box::new(status(
+        Connection::NotFound,
+        Headset::Unknown,
+        None,
+    ))));
+    shared.apply(LinkEvent::DaemonDown("refused".to_string()));
+    assert_eq!(headline(&shared), "ogh-daemon is not running");
 }
 
 #[test]

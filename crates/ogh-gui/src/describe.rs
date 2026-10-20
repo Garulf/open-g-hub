@@ -2,11 +2,17 @@ use ogh_ipc::{AutoSwitchStatus, Charge, Connection, Gate, Headset, Status};
 
 use crate::Shared;
 
-const NOT_RUNNING: &str = "ogh-daemon is not running";
+pub const NOT_RUNNING: &str = "ogh-daemon is not running";
+pub const CONNECTING: &str = "Connecting to ogh-daemon";
 
 pub fn headline(shared: &Shared) -> String {
     let Some(status) = &shared.status else {
-        return NOT_RUNNING.to_string();
+        let text = if shared.connecting {
+            CONNECTING
+        } else {
+            NOT_RUNNING
+        };
+        return text.to_string();
     };
     match &status.connection {
         Connection::Connected => connected_headline(status),

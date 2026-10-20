@@ -13,8 +13,6 @@ use ogh_ipc::{
 
 pub const RECONNECT: Duration = Duration::from_secs(1);
 
-const NOT_RUNNING: &str = "ogh-daemon is not running";
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum LinkEvent {
     Status(Box<Status>),
@@ -223,8 +221,8 @@ impl RequestSender {
         if self.stale.swap(false, Ordering::SeqCst) {
             self.client = None;
         }
-        self.exchange(request).map_err(|_| {
-            match self.report(LinkEvent::RequestFailed(NOT_RUNNING.to_string())) {
+        self.exchange(request).map_err(|error| {
+            match self.report(LinkEvent::RequestFailed(error.to_string())) {
                 Ok(()) => Stop::Unreachable,
                 Err(stop) => stop,
             }
@@ -267,6 +265,7 @@ mod tests {
     use ogh_ipc::{Eq, EqBand, Setting};
 
     use super::*;
+    use crate::describe::NOT_RUNNING;
 
     fn sidetone(percent: u8) -> Request {
         Request::Set {

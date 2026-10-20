@@ -6,6 +6,7 @@ pub mod link;
 mod pages;
 pub mod presets;
 mod shared;
+pub mod startup;
 pub mod tray;
 pub mod tray_menu;
 
