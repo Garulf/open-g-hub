@@ -10,6 +10,11 @@ Four programs, all in this folder. Keep them together.
 
 The window and the tray talk to the daemon, so the daemon has to be running.
 
+If you used the setup program, the "Start open-g-hub when I sign in" box set
+autostart for you, and the programs are in
+%LOCALAPPDATA%\Programs\open-g-hub. Uninstall from Apps & features; your
+profiles and settings stay.
+
 To start the daemon and the tray at every logon, run this in a terminal in that
 folder:
 
