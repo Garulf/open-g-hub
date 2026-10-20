@@ -295,6 +295,16 @@ mod tests {
         name.to_string()
     }
 
+    #[cfg(unix)]
+    fn unreachable_endpoint(dir: &tempfile::TempDir) -> Endpoint {
+        Endpoint::Path(dir.path().join("daemon.sock"))
+    }
+
+    #[cfg(windows)]
+    fn unreachable_endpoint(_dir: &tempfile::TempDir) -> Endpoint {
+        Endpoint::PipeName(format!("ogh-gui-unit-test-{}", std::process::id()))
+    }
+
     #[test]
     fn a_later_set_of_the_same_setting_replaces_the_earlier_one() {
         let queue = vec![sidetone(10), balance(3), sidetone(40)];
@@ -345,7 +355,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let (event_tx, events) = unbounded();
         let sender = RequestSender {
-            endpoint: Endpoint::Path(dir.path().join("daemon.sock")),
+            endpoint: unreachable_endpoint(&dir),
             emitter: Emitter {
                 events: event_tx,
                 wake: Arc::new(|| {}),
