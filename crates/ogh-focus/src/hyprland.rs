@@ -105,8 +105,10 @@ pub fn watch(
         loop {
             match connect(&socket) {
                 Ok((stream, path)) => {
-                    reported = false;
-                    if !report_active_window(&path, &events) || !forward_events(stream, &events) {
+                    let after_outage = std::mem::replace(&mut reported, false);
+                    if !report_active_window(&path, after_outage, &events)
+                        || !forward_events(stream, &events)
+                    {
                         return;
                     }
                 }
@@ -132,15 +134,19 @@ fn connect(socket: &impl Fn() -> Option<PathBuf>) -> Result<(UnixStream, PathBuf
     Ok((stream, path))
 }
 
-/// Returns false once the receiver is gone. A failed query is skipped: the
-/// next focus event still arrives.
-fn report_active_window(event_socket: &Path, events: &Sender<FocusEvent>) -> bool {
+/// Returns false once the receiver is gone. A failed query reports no app after an outage,
+/// so focus stops reading as unavailable; otherwise the next focus event still arrives.
+fn report_active_window(
+    event_socket: &Path,
+    after_outage: bool,
+    events: &Sender<FocusEvent>,
+) -> bool {
     let command_socket = event_socket.with_file_name(COMMAND_SOCKET_NAME);
     match query_active_window(&command_socket) {
         Ok(app) => events.send(FocusEvent::Focus(app)).is_ok(),
         Err(e) => {
             tracing::debug!("cannot query the active window: {e}");
-            true
+            !after_outage || events.send(FocusEvent::Focus(None)).is_ok()
         }
     }
 }

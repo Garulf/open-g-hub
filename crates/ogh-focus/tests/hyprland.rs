@@ -284,6 +284,7 @@ fn watcher_reports_unavailable_while_no_hyprland_socket_exists() {
     let listener = UnixListener::bind(dir.join(".socket2.sock")).unwrap();
     let (mut conn, _) = listener.accept().unwrap();
     conn.write_all(b"activewindow>>kitty,t\n").unwrap();
+    assert_eq!(rx.recv_timeout(WAIT), Ok(FocusEvent::Focus(None)));
     assert_eq!(rx.recv_timeout(WAIT), Ok(focus("kitty")));
 }
 
@@ -310,5 +311,30 @@ fn watcher_reports_each_outage_once() {
     let listener = UnixListener::bind(&path).unwrap();
     let (mut conn, _) = listener.accept().unwrap();
     conn.write_all(b"activewindow>>two,t\n").unwrap();
+    assert_eq!(rx.recv_timeout(WAIT), Ok(FocusEvent::Focus(None)));
     assert_eq!(rx.recv_timeout(WAIT), Ok(focus("two")));
+}
+
+#[test]
+fn watcher_reports_no_app_when_the_query_fails_after_an_outage() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".socket2.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let (tx, rx) = unbounded();
+    let socket = path.clone();
+    let _watcher = watch(move || Some(socket.clone()), RETRY, tx);
+    let (mut conn, _) = listener.accept().unwrap();
+    conn.write_all(b"activewindow>>one,t\n").unwrap();
+    assert_eq!(rx.recv_timeout(WAIT), Ok(focus("one")));
+    drop(conn);
+    drop(listener);
+    std::fs::remove_file(&path).unwrap();
+    assert!(matches!(
+        rx.recv_timeout(WAIT),
+        Ok(FocusEvent::Unavailable(_))
+    ));
+
+    let listener = UnixListener::bind(&path).unwrap();
+    let (_conn, _) = listener.accept().unwrap();
+    assert_eq!(rx.recv_timeout(WAIT), Ok(FocusEvent::Focus(None)));
 }
