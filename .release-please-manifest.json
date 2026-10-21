@@ -1,4 +1,5 @@
 {
+  ".": "0.0.0",
   "crates/ogh-protocol": "0.0.0",
   "crates/ogh-device": "0.0.0",
   "crates/ogh-cli": "0.0.0",

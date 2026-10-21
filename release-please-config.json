@@ -2,16 +2,27 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "rust",
   "bump-minor-pre-major": true,
-  "plugins": ["cargo-workspace"],
+  "plugins": [
+    "cargo-workspace",
+    {
+      "type": "linked-versions",
+      "groupName": "open-g-hub",
+      "components": [
+        "open-g-hub", "ogh-protocol", "ogh-device", "ogh-cli", "ogh-ipc",
+        "ogh-daemon", "ogh-focus", "ogh-audio", "ogh-capture", "ogh-gui"
+      ]
+    }
+  ],
   "packages": {
-    "crates/ogh-protocol": { "component": "ogh-protocol" },
-    "crates/ogh-device": { "component": "ogh-device" },
-    "crates/ogh-cli": { "component": "ogh-cli" },
-    "crates/ogh-ipc": { "component": "ogh-ipc" },
-    "crates/ogh-daemon": { "component": "ogh-daemon" },
-    "crates/ogh-focus": { "component": "ogh-focus" },
-    "crates/ogh-audio": { "component": "ogh-audio" },
-    "crates/ogh-capture": { "component": "ogh-capture" },
-    "crates/ogh-gui": { "component": "ogh-gui" }
+    ".": { "component": "open-g-hub", "release-type": "simple", "initial-version": "0.1.0" },
+    "crates/ogh-protocol": { "component": "ogh-protocol", "skip-github-release": true },
+    "crates/ogh-device": { "component": "ogh-device", "skip-github-release": true },
+    "crates/ogh-cli": { "component": "ogh-cli", "skip-github-release": true },
+    "crates/ogh-ipc": { "component": "ogh-ipc", "skip-github-release": true },
+    "crates/ogh-daemon": { "component": "ogh-daemon", "skip-github-release": true },
+    "crates/ogh-focus": { "component": "ogh-focus", "skip-github-release": true },
+    "crates/ogh-audio": { "component": "ogh-audio", "skip-github-release": true },
+    "crates/ogh-capture": { "component": "ogh-capture", "skip-github-release": true },
+    "crates/ogh-gui": { "component": "ogh-gui", "skip-github-release": true }
   }
 }
