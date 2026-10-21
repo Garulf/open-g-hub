@@ -20,11 +20,11 @@ Four programs ship together: `ogh-daemon` talks to the headset and keeps its sta
 
 ### Windows
 
-Run `open-g-hub-<version>-windows-x86_64-setup.exe`. It installs for your user only, into `%LOCALAPPDATA%\Programs\open-g-hub`, so it needs no administrator rights. It adds an open-g-hub entry to the Start menu for the settings window. Leave "Start open-g-hub when I sign in" checked to run `ogh autostart on` at the end of setup, or uncheck it to run `ogh autostart off`. The last page can start the daemon and the tray right away. Setup stops any running `ogh-daemon`, `ogh-tray` or `ogh-gui` before it copies the files, so it can also upgrade an existing install. Uninstall it from Apps & features: that stops the programs, turns autostart off and removes the files, but keeps your profiles and settings.
+Download `open-g-hub-<version>-windows-x86_64-setup.exe` from the [latest release](https://github.com/Garulf/open-g-hub/releases/latest) and run it. It installs for your user only, into `%LOCALAPPDATA%\Programs\open-g-hub`, so it needs no administrator rights. It adds an open-g-hub entry to the Start menu for the settings window. Leave "Start open-g-hub when I sign in" checked to run `ogh autostart on` at the end of setup, or uncheck it to run `ogh autostart off`. The last page can start the daemon and the tray right away. Setup stops any running `ogh-daemon`, `ogh-tray` or `ogh-gui` before it copies the files, so it can also upgrade an existing install. Uninstall it from Apps & features: that stops the programs, turns autostart off and removes the files, but keeps your profiles and settings.
 
 For an unattended install, run `setup.exe /S`, with `/NOAUTOSTART` to leave autostart off and `/D=<folder>` (last on the line) to pick another folder.
 
-Without the installer, unzip the release into one folder (`ogh.exe`, `ogh-daemon.exe`, `ogh-gui.exe` and `ogh-tray.exe` have to stay together) and run:
+Without the installer, unzip `open-g-hub-<version>-windows-x86_64.zip` from the same release into one folder (`ogh.exe`, `ogh-daemon.exe`, `ogh-gui.exe` and `ogh-tray.exe` have to stay together) and run:
 
 ```sh
 ogh autostart on
