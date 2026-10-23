@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/Garulf/open-g-hub/compare/open-g-hub-v0.1.0...ogh-gui-v0.1.1) (2026-10-23)
+
+
+### Miscellaneous Chores
+
+* **ogh-gui:** Synchronize open-g-hub versions
+
 ## 0.1.0 (2026-10-21)
 
 

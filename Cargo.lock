@@ -2780,7 +2780,7 @@ dependencies = [
 
 [[package]]
 name = "ogh-audio"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2790,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "ogh-capture"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "serde",
@@ -2799,7 +2799,7 @@ dependencies = [
 
 [[package]]
 name = "ogh-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "ogh-ipc",
@@ -2811,7 +2811,7 @@ dependencies = [
 
 [[package]]
 name = "ogh-daemon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossbeam-channel",
  "ctrlc",
@@ -2831,7 +2831,7 @@ dependencies = [
 
 [[package]]
 name = "ogh-device"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hex",
  "hidapi",
@@ -2844,7 +2844,7 @@ dependencies = [
 
 [[package]]
 name = "ogh-focus"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossbeam-channel",
  "serde_json",
@@ -2855,7 +2855,7 @@ dependencies = [
 
 [[package]]
 name = "ogh-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossbeam-channel",
  "eframe",
@@ -2872,7 +2872,7 @@ dependencies = [
 
 [[package]]
 name = "ogh-ipc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "interprocess",
  "serde",
@@ -2882,7 +2882,7 @@ dependencies = [
 
 [[package]]
 name = "ogh-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hex",
  "serde",
