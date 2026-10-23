@@ -27,13 +27,35 @@ pub struct AudioSwitchConfig {
     pub mic_input: String,
 }
 
+/// Windows shows separate game and voice endpoints. PipeWire shows one sink
+/// and one source ("A50 X Analog Stereo", "A50 X Mono") whose descriptions
+/// change with the card profile, so they are matched on the shared prefix.
+#[cfg(windows)]
+const ENDPOINT_NAMES: EndpointNames = EndpointNames {
+    game_output: "A50 X Game",
+    voice_output: "A50 X Voice",
+    mic_input: "A50 X Mic",
+};
+#[cfg(not(windows))]
+const ENDPOINT_NAMES: EndpointNames = EndpointNames {
+    game_output: "A50 X",
+    voice_output: "A50 X",
+    mic_input: "A50 X",
+};
+
+struct EndpointNames {
+    game_output: &'static str,
+    voice_output: &'static str,
+    mic_input: &'static str,
+}
+
 impl Default for AudioSwitchConfig {
     fn default() -> Self {
         AudioSwitchConfig {
             enabled: false,
-            game_output: "A50 X Game".to_string(),
-            voice_output: "A50 X Voice".to_string(),
-            mic_input: "A50 X Mic".to_string(),
+            game_output: ENDPOINT_NAMES.game_output.to_string(),
+            voice_output: ENDPOINT_NAMES.voice_output.to_string(),
+            mic_input: ENDPOINT_NAMES.mic_input.to_string(),
         }
     }
 }

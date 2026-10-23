@@ -189,7 +189,9 @@ voice_output = "A50 X Voice"
 mic_input = "A50 X Mic"
 ```
 
-On Windows the game output becomes the default playback device for the Console and Multimedia roles, the voice output the default for Communications, and the mic the default capture device for all three roles. Each previous default is remembered and restored separately. On Linux the game output becomes the default sink and the mic the default source, and each name is matched as a substring of the PipeWire node description.
+Those are the Windows defaults. On Windows the game output becomes the default playback device for the Console and Multimedia roles, the voice output the default for Communications, and the mic the default capture device for all three roles. Each previous default is remembered and restored separately.
+
+On Linux the A50 X shows up in PipeWire as one sink (`A50 X Analog Stereo`) and one source (`A50 X Mono`), so all three names default to `A50 X`. The game output becomes the default sink and the mic the default source; the voice output is not used. Each name is matched, ignoring case, as a substring of the node description, or of the node nick when there is no description match. A config file saved by open-g-hub 0.1.0 on Linux has the Windows names in it; change them to `A50 X` or delete the three lines.
 
 On Windows the daemon logs to `daemon.log` in the local data directory. On Linux it logs to stderr, which the systemd unit sends to the journal (`journalctl --user -u ogh-daemon`); `ogh-daemon --log-file <path>` writes a file instead. When the daemon starts and its log file is over 5 MiB, it renames it to the same name with `.1` added (`daemon.log.1`), replacing the one before, so it keeps one older log.
 

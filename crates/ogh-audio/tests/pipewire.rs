@@ -9,20 +9,24 @@ fn fixture() -> Value {
 }
 
 #[test]
-fn finds_the_a50x_sink_by_description() {
+fn finds_the_a50x_sink_and_source_by_description() {
     let dump = fixture();
     assert_eq!(
         find_node(&dump, Direction::Render, "a50 x").as_deref(),
-        Some("alsa_output.usb-Astro_A50_X-00.analog-stereo")
+        Some("alsa_output.usb-Logitech_A50_X-00.analog-stereo")
+    );
+    assert_eq!(
+        find_node(&dump, Direction::Capture, "A50 X Mono").as_deref(),
+        Some("alsa_input.usb-Logitech_A50_X-00.mono-fallback")
     );
 }
 
 #[test]
-fn finds_the_a50x_source_by_nick_when_there_is_no_description() {
-    let dump = fixture();
+fn finds_a_node_by_nick_when_there_is_no_description() {
+    let dump = json!([node(1, "Audio/Source", "mic", None, Some("Headset Mic"))]);
     assert_eq!(
-        find_node(&dump, Direction::Capture, "A50 X Mic").as_deref(),
-        Some("alsa_input.usb-Astro_A50_X-00.mono-fallback")
+        find_node(&dump, Direction::Capture, "headset mic").as_deref(),
+        Some("mic")
     );
 }
 
@@ -91,7 +95,7 @@ fn missing_node_is_none() {
 fn set_default_resolves_the_node_id() {
     let dump = fixture();
     assert_eq!(
-        wpctl_args(&dump, "alsa_output.usb-Astro_A50_X-00.analog-stereo"),
+        wpctl_args(&dump, "alsa_output.usb-Logitech_A50_X-00.analog-stereo"),
         Some(vec!["set-default".to_string(), "57".to_string()])
     );
 }

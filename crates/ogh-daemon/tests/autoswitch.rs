@@ -120,10 +120,20 @@ impl AudioRouter for Fake {
     }
 }
 
+/// The endpoint names `Fake::with_a50x` knows, whatever this platform's defaults are.
+fn names() -> AudioSwitchConfig {
+    AudioSwitchConfig {
+        enabled: false,
+        game_output: "A50 X Game".to_string(),
+        voice_output: "A50 X Voice".to_string(),
+        mic_input: "A50 X Mic".to_string(),
+    }
+}
+
 fn enabled() -> AudioSwitchConfig {
     AudioSwitchConfig {
         enabled: true,
-        ..AudioSwitchConfig::default()
+        ..names()
     }
 }
 
@@ -234,7 +244,7 @@ fn remembered_state_restores_after_a_restart_even_when_disabled() {
     let rig = Rig::new();
     rig.auto_switch(enabled()).on_headset(Headset::InUse);
 
-    let mut restarted = rig.auto_switch(AudioSwitchConfig::default());
+    let mut restarted = rig.auto_switch(names());
     restarted.on_headset(Headset::Off);
 
     assert_eq!(rig.fake.current(), original_defaults());
@@ -320,7 +330,7 @@ fn a_lookup_failure_changes_nothing() {
 #[test]
 fn disabled_does_nothing() {
     let rig = Rig::new();
-    let mut auto_switch = rig.auto_switch(AudioSwitchConfig::default());
+    let mut auto_switch = rig.auto_switch(names());
 
     assert_eq!(auto_switch.on_headset(Headset::InUse), ok(false));
     assert_eq!(auto_switch.on_headset(Headset::Docked), ok(false));
@@ -334,7 +344,7 @@ fn disabling_while_active_restores() {
     let mut auto_switch = rig.auto_switch(enabled());
     auto_switch.on_headset(Headset::InUse);
 
-    let outcome = auto_switch.configure(AudioSwitchConfig::default());
+    let outcome = auto_switch.configure(names());
 
     assert_eq!(outcome, ok(false));
     assert_eq!(rig.fake.current(), original_defaults());
@@ -343,7 +353,7 @@ fn disabling_while_active_restores() {
 #[test]
 fn enabling_while_in_use_switches() {
     let rig = Rig::new();
-    let mut auto_switch = rig.auto_switch(AudioSwitchConfig::default());
+    let mut auto_switch = rig.auto_switch(names());
     auto_switch.on_headset(Headset::InUse);
     assert!(rig.fake.sets().is_empty());
 
@@ -355,7 +365,7 @@ fn enabling_while_in_use_switches() {
 #[test]
 fn enabling_while_docked_waits_for_the_next_undock() {
     let rig = Rig::new();
-    let mut auto_switch = rig.auto_switch(AudioSwitchConfig::default());
+    let mut auto_switch = rig.auto_switch(names());
     auto_switch.on_headset(Headset::Docked);
 
     assert_eq!(auto_switch.configure(enabled()), ok(false));
@@ -518,10 +528,7 @@ fn disabling_with_nothing_remembered_clears_a_previous_error() {
     let mut auto_switch = rig.auto_switch(enabled());
     assert!(auto_switch.on_headset(Headset::InUse).error.is_some());
 
-    assert_eq!(
-        auto_switch.configure(AudioSwitchConfig::default()),
-        ok(false)
-    );
+    assert_eq!(auto_switch.configure(names()), ok(false));
 }
 
 #[test]

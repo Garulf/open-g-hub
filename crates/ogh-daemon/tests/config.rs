@@ -412,3 +412,44 @@ fn file_deleted_while_running_starts_again_from_defaults() {
     assert!(!on_disk.profiles.contains_key("fps"));
     assert!(on_disk.audio_switch.enabled);
 }
+
+#[cfg(not(windows))]
+#[test]
+fn default_audio_names_find_the_a50x_pipewire_nodes() {
+    use ogh_audio::Direction;
+    use ogh_audio::pipewire::find_node;
+    use ogh_daemon::config::AudioSwitchConfig;
+
+    let node = |class: &str, name: &str, description: &str| {
+        serde_json::json!({
+            "type": "PipeWire:Interface:Node",
+            "info": { "props": {
+                "media.class": class,
+                "node.name": name,
+                "node.description": description,
+                "node.nick": "A50 X",
+            } }
+        })
+    };
+    let dump = serde_json::json!([
+        node(
+            "Audio/Sink",
+            "alsa_output.usb-Logitech_A50_X-00.analog-stereo",
+            "A50 X Analog Stereo"
+        ),
+        node(
+            "Audio/Source",
+            "alsa_input.usb-Logitech_A50_X-00.mono-fallback",
+            "A50 X Mono"
+        ),
+    ]);
+    let names = AudioSwitchConfig::default();
+    assert_eq!(
+        find_node(&dump, Direction::Render, &names.game_output).as_deref(),
+        Some("alsa_output.usb-Logitech_A50_X-00.analog-stereo")
+    );
+    assert_eq!(
+        find_node(&dump, Direction::Capture, &names.mic_input).as_deref(),
+        Some("alsa_input.usb-Logitech_A50_X-00.mono-fallback")
+    );
+}
