@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use ogh_daemon::config::{AudioSwitchConfig, Config, Loaded, Store, load, save};
+use ogh_daemon::config::{Config, Loaded, Store, load, save};
 use ogh_daemon::paths::Paths;
 use ogh_ipc::{Channel, Eq, EqBand, ErrorKind, ProfileSettings, StreamMixSetting};
 use tempfile::TempDir;
@@ -418,6 +418,7 @@ fn file_deleted_while_running_starts_again_from_defaults() {
 fn default_audio_names_find_the_a50x_pipewire_nodes() {
     use ogh_audio::Direction;
     use ogh_audio::pipewire::find_node;
+    use ogh_daemon::config::AudioSwitchConfig;
 
     let node = |class: &str, name: &str, description: &str| {
         serde_json::json!({
