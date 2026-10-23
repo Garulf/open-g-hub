@@ -915,9 +915,10 @@ fn hand_edited_audio_names_reach_the_auto_switch_at_the_next_change() {
         Ok(Command::Configure(AudioSwitchConfig::default()))
     );
 
+    let default_mic = format!("mic_input = \"{}\"", AudioSwitchConfig::default().mic_input);
     let text = std::fs::read_to_string(&path)
         .unwrap()
-        .replace("A50 X Mic", "Desk Mic");
+        .replace(&default_mic, "mic_input = \"Desk Mic\"");
     std::fs::write(&path, text).unwrap();
     assert_eq!(
         request(Request::LinkApp {

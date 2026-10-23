@@ -17,8 +17,8 @@
     "info": {
       "props": {
         "media.class": "Audio/Sink",
-        "node.name": "alsa_output.usb-Astro_A50_X-00.analog-stereo",
-        "node.description": "Astro A50 X Analog Stereo",
+        "node.name": "alsa_output.usb-Logitech_A50_X-00.analog-stereo",
+        "node.description": "A50 X Analog Stereo",
         "node.nick": "A50 X"
       }
     }
@@ -41,8 +41,9 @@
     "info": {
       "props": {
         "media.class": "Audio/Source",
-        "node.name": "alsa_input.usb-Astro_A50_X-00.mono-fallback",
-        "node.nick": "Astro A50 X Mic"
+        "node.name": "alsa_input.usb-Logitech_A50_X-00.mono-fallback",
+        "node.description": "A50 X Mono",
+        "node.nick": "A50 X"
       }
     }
   },
@@ -86,7 +87,7 @@
         "subject": 0,
         "key": "default.configured.audio.sink",
         "type": "Spa:String:JSON",
-        "value": { "name": "alsa_output.usb-Astro_A50_X-00.analog-stereo" }
+        "value": { "name": "alsa_output.usb-Logitech_A50_X-00.analog-stereo" }
       }
     ]
   }
