@@ -434,22 +434,58 @@ fn default_audio_names_find_the_a50x_pipewire_nodes() {
     let dump = serde_json::json!([
         node(
             "Audio/Sink",
-            "alsa_output.usb-Logitech_A50_X-00.analog-stereo",
-            "A50 X Analog Stereo"
+            "alsa_output.usb-Logitech_A50_X-00.mono-chat",
+            "A50 X Chat"
+        ),
+        node(
+            "Audio/Sink",
+            "alsa_output.usb-Logitech_A50_X-00.stereo-game",
+            "A50 X Game"
         ),
         node(
             "Audio/Source",
-            "alsa_input.usb-Logitech_A50_X-00.mono-fallback",
-            "A50 X Mono"
+            "alsa_input.usb-Logitech_A50_X-00.mono-chat",
+            "A50 X Chat"
         ),
     ]);
     let names = AudioSwitchConfig::default();
     assert_eq!(
         find_node(&dump, Direction::Render, &names.game_output).as_deref(),
-        Some("alsa_output.usb-Logitech_A50_X-00.analog-stereo")
+        Some("alsa_output.usb-Logitech_A50_X-00.stereo-game")
+    );
+    assert_eq!(
+        find_node(&dump, Direction::Render, &names.voice_output).as_deref(),
+        Some("alsa_output.usb-Logitech_A50_X-00.mono-chat")
     );
     assert_eq!(
         find_node(&dump, Direction::Capture, &names.mic_input).as_deref(),
+        Some("alsa_input.usb-Logitech_A50_X-00.mono-chat")
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn default_mic_name_still_finds_the_source_without_the_udev_rule() {
+    use ogh_audio::Direction;
+    use ogh_audio::pipewire::find_node;
+    use ogh_daemon::config::AudioSwitchConfig;
+
+    let dump = serde_json::json!([{
+        "type": "PipeWire:Interface:Node",
+        "info": { "props": {
+            "media.class": "Audio/Source",
+            "node.name": "alsa_input.usb-Logitech_A50_X-00.mono-fallback",
+            "node.description": "A50 X Mono",
+            "node.nick": "A50 X",
+        } }
+    }]);
+    assert_eq!(
+        find_node(
+            &dump,
+            Direction::Capture,
+            &AudioSwitchConfig::default().mic_input
+        )
+        .as_deref(),
         Some("alsa_input.usb-Logitech_A50_X-00.mono-fallback")
     );
 }

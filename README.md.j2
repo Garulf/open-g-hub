@@ -51,7 +51,7 @@ Add the flake as an input and import its module:
 }
 ```
 
-This installs `ogh`, `ogh-gui` and `ogh-tray`, adds the udev rule that gives your user access to the base station, and runs `ogh-daemon` and `ogh-tray` as user services. The window gets a launcher entry and an icon. To skip the tray service, set `programs.open-g-hub.tray.enable = false;`.
+This installs `ogh`, `ogh-gui` and `ogh-tray`, adds the udev rule that gives your user access to the base station and splits its audio into Game and Chat outputs, and runs `ogh-daemon` and `ogh-tray` as user services. The window gets a launcher entry and an icon. To skip the tray service, set `programs.open-g-hub.tray.enable = false;`.
 
 ### Home Manager
 
@@ -72,6 +72,8 @@ Build with `cargo build --release -p ogh-cli -p ogh-daemon -p ogh-gui` and insta
 sudo cp packaging/linux/70-open-g-hub.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger
 ```
+
+The same rule makes PipeWire show the base station as separate Game and Chat outputs. PipeWire picks the profile when the card appears, so unplug the base station and plug it back in once after installing the rule.
 
 Install the user units and start them:
 
@@ -191,7 +193,7 @@ mic_input = "A50 X Mic"
 
 Those are the Windows defaults. On Windows the game output becomes the default playback device for the Console and Multimedia roles, the voice output the default for Communications, and the mic the default capture device for all three roles. Each previous default is remembered and restored separately.
 
-On Linux the A50 X shows up in PipeWire as one sink (`A50 X Analog Stereo`) and one source (`A50 X Mono`), so all three names default to `A50 X`. The game output becomes the default sink and the mic the default source; the voice output is not used. Each name is matched, ignoring case, as a substring of the node description, or of the node nick when there is no description match. A config file saved by open-g-hub 0.1.0 on Linux has the Windows names in it; change them to `A50 X` or delete the three lines.
+On Linux the defaults are `A50 X Game`, `A50 X Chat` and `A50 X`. The udev rule gives PipeWire its gaming headset profile, which splits the A50 X into two sinks, `A50 X Game` and `A50 X Chat`, and one source, `A50 X Chat`. Without the rule PipeWire shows one sink (`A50 X Analog Stereo`, which is the chat channel) and one source (`A50 X Mono`). The game output becomes the default sink and the mic the default source; the voice output is not used, so point your chat app at `A50 X Chat` yourself. Each name is matched, ignoring case, as a substring of the node description, or of the node nick when there is no description match. A config file saved by open-g-hub 0.1.0 on Linux has `mic_input = "A50 X Mic"`, which matches nothing; change it to `A50 X` or delete the three lines.
 
 On Windows the daemon logs to `daemon.log` in the local data directory. On Linux it logs to stderr, which the systemd unit sends to the journal (`journalctl --user -u ogh-daemon`); `ogh-daemon --log-file <path>` writes a file instead. When the daemon starts and its log file is over 5 MiB, it renames it to the same name with `.1` added (`daemon.log.1`), replacing the one before, so it keeps one older log.
 

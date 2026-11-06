@@ -27,9 +27,9 @@ pub struct AudioSwitchConfig {
     pub mic_input: String,
 }
 
-/// Windows shows separate game and voice endpoints. PipeWire shows one sink
-/// and one source ("A50 X Analog Stereo", "A50 X Mono") whose descriptions
-/// change with the card profile, so they are matched on the shared prefix.
+/// On Linux the udev rule gives PipeWire the gaming headset profile set, which
+/// names the sinks "A50 X Game" and "A50 X Chat". Its one source is also
+/// "A50 X Chat", or "A50 X Mono" without the rule, so the mic matches either.
 #[cfg(windows)]
 const ENDPOINT_NAMES: EndpointNames = EndpointNames {
     game_output: "A50 X Game",
@@ -38,8 +38,8 @@ const ENDPOINT_NAMES: EndpointNames = EndpointNames {
 };
 #[cfg(not(windows))]
 const ENDPOINT_NAMES: EndpointNames = EndpointNames {
-    game_output: "A50 X",
-    voice_output: "A50 X",
+    game_output: "A50 X Game",
+    voice_output: "A50 X Chat",
     mic_input: "A50 X",
 };
 

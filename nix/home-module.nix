@@ -17,7 +17,8 @@ in
       description = ''
         Whether to run the open-g-hub daemon for the Astro A50 X as a user service.
         This module does not install the udev rule that lets your user open the
-        headset. Use the NixOS module for that, or add the package to
+        headset and splits its audio into Game and Chat outputs. Use the NixOS
+        module for that, or add the package to
         `services.udev.packages` in your system configuration.
       '';
     };
