@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/Garulf/open-g-hub/compare/open-g-hub-v0.1.0...ogh-ipc-v0.2.0) (2026-11-06)
+
+
+### Miscellaneous Chores
+
+* **ogh-ipc:** Synchronize open-g-hub versions
+
 ## 0.1.0 (2026-10-21)
 
 
