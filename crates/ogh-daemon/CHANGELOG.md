@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.0](https://github.com/Garulf/open-g-hub/compare/open-g-hub-v0.1.0...ogh-daemon-v0.2.0) (2026-11-06)
+
+
+### Features
+
+* **audio:** split the A50 X into Game and Chat outputs on Linux ([bf0afc6](https://github.com/Garulf/open-g-hub/commit/bf0afc6225ebe9b1707d6527bfa2e5bfce616e01))
+* **audio:** split the A50 X into Game and Chat outputs on Linux ([b2700cd](https://github.com/Garulf/open-g-hub/commit/b2700cd428144e5861d0459dc21a687a679c6fdb))
+
+
+### Bug Fixes
+
+* **audio:** default Linux endpoint names to the A50 X PipeWire nodes ([5ae48cd](https://github.com/Garulf/open-g-hub/commit/5ae48cd591fa7123873d053315933e95ff1e50b1))
+* **audio:** default Linux endpoint names to the A50 X PipeWire nodes ([f2e798a](https://github.com/Garulf/open-g-hub/commit/f2e798a3f0fccbbe71fd555513b1c1a844b0f6cf))
+* **audio:** scope the PipeWire test import to non-Windows builds ([7420243](https://github.com/Garulf/open-g-hub/commit/74202434832eb1ff4c7ecb93b246107418bbe6c7))
+
 ## 0.1.0 (2026-10-21)
 
 
